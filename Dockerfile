@@ -1,19 +1,27 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bullseye
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl && apt-get clean
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        curl \
+        build-essential \
+        python3-dev \
+        libbrlapi-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN curl -sSL https://install.python-poetry.org | python3 -
+RUN pip install --upgrade pip
 
-ENV PATH="/root/.local/bin:$PATH"
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY pyproject.toml /app/
+COPY . .
 
-RUN poetry lock
+EXPOSE 3000
+EXPOSE 8501
 
-RUN poetry install --no-root --no-dev
-
-COPY . /app/
-
-CMD ["poetry", "run", "python3", "-u", "-m", "src.agent.main"]
+CMD ["sh", "-c", "python -u app/main.py & streamlit run ui/streamlit_app.py --server.port=8501 --server.address=0.0.0.0"]

@@ -1,0 +1,16 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart_agent_dev
+    ports:
+      - "3000:3000"
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+    command: >
+      sh -c "python -u app/main.py & streamlit run ui/streamlit_app.py
+      --server.port=8501 --server.address=0.0.0.0"
