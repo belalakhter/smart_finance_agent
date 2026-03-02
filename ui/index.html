@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet" />
 <style>
-    
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -172,7 +172,7 @@ html, body {
 .conv-actions {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 4px;
   opacity: 0;
   transition: opacity 0.12s;
   flex-shrink: 0;
@@ -182,7 +182,7 @@ html, body {
 
 .icon-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px;
+  width: 28px; height: 28px;
   border-radius: 4px;
   border: none;
   background: transparent;
@@ -192,6 +192,10 @@ html, body {
   flex-shrink: 0;
   font-size: 12px;
   line-height: 1;
+}
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
 }
 .icon-btn:hover { color: var(--c-text-2); background: rgba(255,255,255,0.06); }
 .icon-btn.danger:hover { color: var(--c-danger); background: rgba(224,92,92,0.1); }
@@ -221,7 +225,8 @@ html, body {
 #docs-section {
   flex-shrink: 0;
   border-top: 1px solid var(--c-border);
-  padding-bottom: 8px;
+  padding-bottom: 30px;
+  margin-top: -4px;
 }
 
 .upload-area {
@@ -255,7 +260,7 @@ html, body {
 #doc-list::-webkit-scrollbar-thumb { background: var(--c-border-2); border-radius: 3px; }
 
 .doc-item {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 10px;
   padding: 5px 10px;
   border-radius: var(--r-sm);
   font-size: 12px;
@@ -263,7 +268,7 @@ html, body {
   transition: background 0.12s;
 }
 .doc-item:hover { background: var(--c-surface-2); color: var(--c-text); }
-.doc-icon { opacity: 0.4; flex-shrink: 0; font-size: 12px; }
+.doc-icon { opacity: 0.4; flex-shrink: 0; font-size: 16px; }
 .doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-status-ok { color: var(--c-green); font-size: 10px; flex-shrink: 0; }
 .doc-status-pending { color: #f0b429; font-size: 10px; flex-shrink: 0; }
@@ -815,7 +820,12 @@ function renderDocs() {
     const item = document.createElement('div');
     item.className = 'doc-item';
     item.innerHTML = `
-      <span class="doc-icon">📄</span>
+      <span class="doc-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M4 1h8l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M12 1v3h3" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+      </span>
       <span class="doc-name" title="${escHtml(doc.filename)}">${escHtml(doc.filename)}</span>
       <span class="${ok ? 'doc-status-ok' : 'doc-status-pending'}">${ok ? '✓' : '…'}</span>
       <button class="icon-btn danger doc-del" data-id="${doc.id}" title="Delete">
