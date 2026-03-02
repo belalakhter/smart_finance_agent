@@ -47,8 +47,8 @@ def upload_document():
             return jsonify({"error": str(e)}), 500
    
     try:
-        from app.services.worker_threads import submit_task  
-        from app.rag.lite_rag import ingest_document          
+        from services.worker_threads import submit_task  
+        from rag.lite_rag import ingest_document          
         submit_task(ingest_document, str(doc.id), raw, f.filename)
     except Exception:
         pass  

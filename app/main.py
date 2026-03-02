@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 from database.connection import init_connection_pool
 from services.worker_threads import init_worker, shutdown_worker
 from services.logger import get_logger
@@ -7,13 +7,26 @@ from api.routes import register_routes
 
 logger = get_logger(__name__, level="INFO")
 
+UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ui")
+
 
 def create_flask_app():
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=None)
 
     @app.route("/health", methods=["GET"])
     def health_check():
         return jsonify({"status": "healthy", "server_active": True})
+
+    @app.route("/", methods=["GET"])
+    def serve_index():
+        return send_from_directory(UI_DIR, "index.html")
+
+    @app.route("/<path:filename>", methods=["GET"])
+    def serve_static(filename):
+        filepath = os.path.join(UI_DIR, filename)
+        if os.path.isfile(filepath):
+            return send_from_directory(UI_DIR, filename)
+        return jsonify({"error": "not found"}), 404
 
     register_routes(app)
     return app

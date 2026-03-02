@@ -80,7 +80,7 @@ def send_message(chat_id):
         messages.append({"role": "user", "content": message})
 
         try:
-            from app.agent.graph import run_agent  
+            from agent.graph import run_agent  
             reply = run_agent(chat_id=str(chat.id), messages=messages)
         except Exception as e:
             reply = f"[Agent error] {e}"
