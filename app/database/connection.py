@@ -3,7 +3,7 @@ from psycopg2 import pool
 from psycopg2.extensions import connection as _connection
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from database.models import Base  
+from app.database.models import Base 
 
 _connection_pool: pool.SimpleConnectionPool | None = None
 _engine = None 
@@ -36,7 +36,7 @@ def init_connection_pool(minconn=1, maxconn=5):
             poolclass=None  
         )    
 
-        Base.metadata.create_all(_engine)
+        Base.metadata.create_all(_engine, checkfirst=True)
         print("Database tables ensured (migration complete).")
 
         _SessionLocal = sessionmaker(bind=_engine)

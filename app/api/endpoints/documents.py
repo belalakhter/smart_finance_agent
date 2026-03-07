@@ -1,8 +1,8 @@
 from flask import Blueprint, request, jsonify, send_file
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from database.connection import get_session
-from database.models import Document, StatusEnum
+from app.database.connection import get_session
+from app.database.models import Document, StatusEnum
 import uuid
 import io
 
@@ -13,10 +13,6 @@ def _session():
 
 @documents_bp.route("/documents", methods=["POST"])
 def upload_document():
-    """
-    Multipart form: file field named 'file'.
-    Returns: { "id": "<uuid>", "filename": "...", "status": "pending" }
-    """
     if "file" not in request.files:
         return jsonify({"error": "No file part in request"}), 400
 
@@ -30,9 +26,11 @@ def upload_document():
         return jsonify({"error": f"File type '.{ext}' not allowed. Use: {allowed}"}), 400
 
     raw = f.read()
+    filename = f.filename  
+
     doc = Document(
         id=uuid.uuid4(),
-        filename=f.filename,
+        filename=filename,
         content=raw,
         status=StatusEnum.pending,
     )
@@ -42,23 +40,25 @@ def upload_document():
             session.add(doc)
             session.commit()
             session.refresh(doc)
+            doc_id     = str(doc.id)       
+            doc_name   = doc.filename      
+            doc_status = doc.status.value  
         except SQLAlchemyError as e:
             session.rollback()
             return jsonify({"error": str(e)}), 500
-   
+
     try:
-        from services.worker_threads import submit_task  
-        from rag.lite_rag import ingest_document          
-        submit_task(ingest_document, str(doc.id), raw, f.filename)
+        from services.worker_threads import submit_task
+        from rag.lite_rag import ingest_document
+        submit_task(ingest_document, doc_id, raw, filename)
     except Exception:
-        pass  
+        pass
 
     return jsonify({
-        "id": str(doc.id),
-        "filename": doc.filename,
-        "status": doc.status.value,
+        "id":       doc_id,
+        "filename": doc_name,
+        "status":   doc_status,
     }), 201
-
 
 @documents_bp.route("/documents", methods=["GET"])
 def list_documents():

@@ -644,7 +644,7 @@ html, body {
 const API = '/api';
 
 let state = {
-  chats: {},          
+  chats: {},
   currentChatId: null,
   messages: [],
   docs: [],
@@ -653,6 +653,7 @@ let state = {
 
 async function apiFetch(method, path, body, isFormData = false) {
   const opts = { method, headers: {} };
+
   if (body) {
     if (isFormData) {
       opts.body = body;
@@ -661,6 +662,7 @@ async function apiFetch(method, path, body, isFormData = false) {
       opts.body = JSON.stringify(body);
     }
   }
+
   const res = await fetch(API + path, opts);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -674,8 +676,13 @@ function toast(msg, type = 'info') {
   setTimeout(() => el.remove(), 3200);
 }
 
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 function renderMarkdown(text) {
   if (!text) return '';
+
   let html = text
     .replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
       `<pre><code class="lang-${lang}">${escHtml(code.trim())}</code></pre>`)
@@ -684,23 +691,10 @@ function renderMarkdown(text) {
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
     .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
     .replace(/\n\n+/g, '</p><p>')
     .replace(/\n/g, '<br>');
-  html = `<p>${html}</p>`;
-  html = html
-    .replace(/<p>(<h[123]>)/g, '$1')
-    .replace(/(<\/h[123]>)<\/p>/g, '$1')
-    .replace(/<p>(<pre>)/g, '$1')
-    .replace(/(<\/pre>)<\/p>/g, '$1')
-    .replace(/<p>(<li>)/g, '<ul><li>')
-    .replace(/(<\/li>)<\/p>/g, '</li></ul>');
-  return html;
-}
 
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return `<p>${html}</p>`;
 }
 
 function autoResize(ta) {
@@ -708,61 +702,19 @@ function autoResize(ta) {
   ta.style.height = Math.min(ta.scrollHeight, 180) + 'px';
 }
 
-function renderConvList() {
-  const list = document.getElementById('conv-list');
-  list.innerHTML = '';
+function updateSendButton() {
+  const input = document.getElementById('msg-input');
+  const send = document.getElementById('send-btn');
 
-  const ids = Object.keys(state.chats);
-  if (ids.length === 0) {
-    list.innerHTML = '<div style="padding:8px 16px;font-size:12px;color:var(--c-text-3);">No conversations yet</div>';
-    return;
-  }
+  const hasText = input.value.trim().length > 0;
+  const hasChat = !!state.currentChatId;
 
-  ids.forEach(cid => {
-    const meta = state.chats[cid];
-    const isActive = cid === state.currentChatId;
-    const item = document.createElement('div');
-    item.className = 'conv-item' + (isActive ? ' active' : '');
-    item.dataset.cid = cid;
-
-    item.innerHTML = `
-      <div class="conv-active-dot"></div>
-      <div class="conv-name" title="${escHtml(meta.preview || '')}">${escHtml(meta.name || 'Untitled')}</div>
-      <div class="conv-actions">
-        <button class="icon-btn rename-btn" title="Rename" data-cid="${cid}">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <button class="icon-btn danger delete-btn" title="Delete" data-cid="${cid}">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2 3h8M4.5 3V2h3v1M5 5.5v3M7 5.5v3M3 3l.5 7h5L9 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-      </div>`;
-
-    item.querySelector('.conv-name').addEventListener('click', () => selectChat(cid));
-    item.querySelector('.conv-active-dot').addEventListener('click', () => selectChat(cid));
-
-    item.querySelector('.rename-btn').addEventListener('click', e => {
-      e.stopPropagation();
-      startRename(item, cid, meta.name);
-    });
-
-    item.querySelector('.delete-btn').addEventListener('click', e => {
-      e.stopPropagation();
-      deleteChat(cid);
-    });
-
-    list.appendChild(item);
-  });
+  send.disabled = !(hasText && hasChat && !state.isThinking);
 }
 
-function renderMessages() {
-  const container = document.getElementById('messages');
-  container.innerHTML = '';
-  state.messages.forEach(m => appendMessage(m.role, m.content, false));
-  scrollToBottom();
+function scrollToBottom() {
+  const area = document.getElementById('chat-area');
+  area.scrollTop = area.scrollHeight;
 }
 
 function appendMessage(role, content, animate = true) {
@@ -770,7 +722,6 @@ function appendMessage(role, content, animate = true) {
 
   const row = document.createElement('div');
   row.className = `msg-row ${role}`;
-  if (!animate) row.style.animation = 'none';
 
   if (role === 'assistant') {
     row.innerHTML = `
@@ -781,295 +732,286 @@ function appendMessage(role, content, animate = true) {
   }
 
   container.appendChild(row);
-  if (animate) scrollToBottom();
-  return row;
+  scrollToBottom();
 }
 
 function showThinking() {
   const container = document.getElementById('messages');
+
   const row = document.createElement('div');
-  row.className = 'msg-row assistant thinking-row';
-  row.id = 'thinking-indicator';
+  row.id = "thinking-indicator";
+  row.className = "msg-row assistant thinking-row";
+
   row.innerHTML = `
-    <div class="msg-avatar">S</div>
-    <div class="msg-content">
-      <div class="thinking-dots">
-        <span></span><span></span><span></span>
-      </div>
-    </div>`;
+  <div class="msg-avatar">S</div>
+  <div class="msg-content">
+    <div class="thinking-dots">
+      <span></span><span></span><span></span>
+    </div>
+  </div>`;
+
   container.appendChild(row);
   scrollToBottom();
 }
 
 function hideThinking() {
-  const el = document.getElementById('thinking-indicator');
+  const el = document.getElementById("thinking-indicator");
   if (el) el.remove();
 }
 
-function scrollToBottom() {
-  const area = document.getElementById('chat-area');
-  area.scrollTop = area.scrollHeight;
-}
+function renderMessages() {
+  const container = document.getElementById('messages');
+  container.innerHTML = '';
 
+  state.messages.forEach(m => appendMessage(m.role, m.content, false));
 
-function renderDocs() {
-  const list = document.getElementById('doc-list');
-  list.innerHTML = '';
-  state.docs.forEach(doc => {
-    const ok = doc.status === 'completed';
-    const item = document.createElement('div');
-    item.className = 'doc-item';
-    item.innerHTML = `
-      <span class="doc-icon">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M4 1h8l3 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.2"/>
-          <path d="M12 1v3h3" stroke="currentColor" stroke-width="1.2"/>
-        </svg>
-      </span>
-      <span class="doc-name" title="${escHtml(doc.filename)}">${escHtml(doc.filename)}</span>
-      <span class="${ok ? 'doc-status-ok' : 'doc-status-pending'}">${ok ? '✓' : '…'}</span>
-      <button class="icon-btn danger doc-del" data-id="${doc.id}" title="Delete">
-        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-          <path d="M2 3h8M4.5 3V2h3v1M5 5.5v3M7 5.5v3M3 3l.5 7h5L9 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>`;
-    item.querySelector('.doc-del').addEventListener('click', () => deleteDoc(doc.id));
-    list.appendChild(item);
-  });
+  scrollToBottom();
 }
 
 function setView(mode) {
-  const empty   = document.getElementById('empty-state');
-  const chat    = document.getElementById('chat-area');
-  const sendBtn = document.getElementById('send-btn');
+  const empty = document.getElementById('empty-state');
+  const chat = document.getElementById('chat-area');
 
   if (mode === 'empty') {
     empty.style.display = 'flex';
-    chat.style.display  = 'none';
-    empty.querySelector('.empty-title').textContent  = 'No conversation selected';
-    empty.querySelector('.empty-sub').textContent    = 'Create a new conversation to get started.';
-    empty.querySelector('.empty-icon').textContent   = '_';
-    sendBtn.disabled = true;
-  } else if (mode === 'new-chat') {
-    empty.style.display = 'flex';
-    chat.style.display  = 'none';
-    empty.querySelector('.empty-title').textContent = 'How can I help?';
-    empty.querySelector('.empty-sub').textContent   = 'Type a message below to start.';
-    empty.querySelector('.empty-icon').textContent  = '>';
-    sendBtn.disabled = false;
-  } else {
-    empty.style.display = 'none';
-    chat.style.display  = 'block';
-    sendBtn.disabled = false;
+    chat.style.display = 'none';
   }
+
+  if (mode === 'new-chat') {
+    empty.style.display = 'flex';
+    chat.style.display = 'none';
+  }
+
+  if (mode === 'chat') {
+    empty.style.display = 'none';
+    chat.style.display = 'block';
+  }
+
+  updateSendButton();
 }
 
 function updateTopbar() {
   const nameEl = document.getElementById('topbar-name');
-  const idEl   = document.getElementById('topbar-id');
-  if (state.currentChatId) {
-    const meta = state.chats[state.currentChatId];
-    nameEl.textContent = meta ? meta.name : 'Untitled';
-    idEl.textContent   = '#' + state.currentChatId.slice(0, 8);
-  } else {
-    nameEl.textContent = 'Smat Agent';
-    idEl.textContent   = 'no conversation selected';
+  const idEl = document.getElementById('topbar-id');
+
+  if (!state.currentChatId) {
+    nameEl.textContent = "Smat Agent";
+    idEl.textContent = "no conversation selected";
+    return;
   }
+
+  const meta = state.chats[state.currentChatId];
+
+  nameEl.textContent = meta?.name || "Untitled";
+  idEl.textContent = "#" + state.currentChatId.slice(0,8);
+}
+
+function renderConvList() {
+  const list = document.getElementById('conv-list');
+  list.innerHTML = '';
+
+  const ids = Object.keys(state.chats);
+
+  if (!ids.length) {
+    list.innerHTML = '<div style="padding:10px;color:#555;font-size:12px">No conversations</div>';
+    return;
+  }
+
+  ids.forEach(cid => {
+
+    const meta = state.chats[cid];
+    const isActive = cid === state.currentChatId;
+
+    const item = document.createElement('div');
+    item.className = 'conv-item' + (isActive ? ' active' : '');
+
+    item.innerHTML = `
+      <div class="conv-active-dot"></div>
+      <div class="conv-name">${escHtml(meta.name)}</div>
+    `;
+
+    item.onclick = () => selectChat(cid);
+
+    list.appendChild(item);
+  });
 }
 
 async function loadChats() {
   try {
+
     const data = await apiFetch('GET', '/chats');
+
     state.chats = {};
-    if (Array.isArray(data)) data.forEach(c => { state.chats[c.id] = c; });
-    renderConvList();
-  } catch(e) { console.error('loadChats', e); }
-}
 
-async function loadDocs() {
-  try {
-    const data = await apiFetch('GET', '/documents');
-    state.docs = Array.isArray(data) ? data : [];
-    renderDocs();
-  } catch(e) { console.error('loadDocs', e); }
-}
-
-async function createChat() {
-  try {
-    const res = await apiFetch('POST', '/chats', { name: 'New Conversation' });
-    if (res.id) {
-      state.chats[res.id] = res;
-      state.currentChatId = res.id;
-      state.messages = [];
-      renderConvList();
-      updateTopbar();
-      setView('new-chat');
+    if (Array.isArray(data)) {
+      data.forEach(c => state.chats[c.id] = c);
     }
-  } catch(e) { toast('Failed to create chat', 'error'); }
+
+    renderConvList();
+
+  } catch(e) {
+    console.error(e);
+  }
 }
 
 async function selectChat(cid) {
+
   if (cid === state.currentChatId) return;
+
   try {
+
     const data = await apiFetch('GET', `/chats/${cid}`);
+
     state.currentChatId = cid;
     state.messages = data.messages || [];
+
     renderConvList();
     updateTopbar();
+
     if (state.messages.length === 0) {
       setView('new-chat');
     } else {
       setView('chat');
       renderMessages();
     }
-  } catch(e) { toast('Failed to load chat', 'error'); }
+
+    document.getElementById('msg-input').focus();
+
+  } catch(e) {
+    toast("Failed to load chat", "error");
+  }
+}
+
+async function createChat() {
+
+  try {
+
+    const res = await apiFetch('POST', '/chats', { name:"New Conversation" });
+
+    if (!res.id) return;
+
+    state.chats[res.id] = res;
+    state.currentChatId = res.id;
+    state.messages = [];
+
+    renderConvList();
+    updateTopbar();
+    setView('new-chat');
+
+    document.getElementById('msg-input').focus();
+
+  } catch(e) {
+    toast("Failed to create chat","error");
+  }
 }
 
 async function sendMessage(text) {
-  if (!text.trim() || state.isThinking || !state.currentChatId) return;
+
+  if (!text || !state.currentChatId || state.isThinking) return;
+
   state.isThinking = true;
+  updateSendButton();
 
   if (state.messages.length === 0) setView('chat');
 
-  appendMessage('user', text);
-  state.messages.push({ role: 'user', content: text });
+  appendMessage("user", text);
+  state.messages.push({role:"user",content:text});
+
   showThinking();
 
-  document.getElementById('send-btn').disabled = true;
-  document.getElementById('msg-input').disabled = true;
+  const input = document.getElementById("msg-input");
+  input.disabled = true;
 
   try {
-    const res = await apiFetch('POST', `/chats/${state.currentChatId}/messages`, { message: text });
+
+    const res = await apiFetch(
+      "POST",
+      `/chats/${state.currentChatId}/messages`,
+      {message:text}
+    );
+
     hideThinking();
-    const reply = res.reply || res.error || 'No response';
-    appendMessage('assistant', reply);
-    state.messages = res.messages || [...state.messages, { role: 'assistant', content: reply }];
+
+    const reply = res.reply || "No response";
+
+    appendMessage("assistant", reply);
+
+    state.messages = res.messages || [
+      ...state.messages,
+      {role:"assistant",content:reply}
+    ];
+
     await loadChats();
+
   } catch(e) {
+
     hideThinking();
-    appendMessage('assistant', 'An error occurred. Please try again.');
-    toast('Message failed', 'error');
+
+    appendMessage(
+      "assistant",
+      "An error occurred. Please try again."
+    );
+
+    toast("Message failed","error");
+
   } finally {
+
     state.isThinking = false;
-    document.getElementById('send-btn').disabled = false;
-    document.getElementById('msg-input').disabled = false;
-    document.getElementById('msg-input').focus();
+
+    input.disabled = false;
+    input.focus();
+
+    updateSendButton();
   }
 }
 
-async function deleteChat(cid) {
-  try {
-    await apiFetch('DELETE', `/chats/${cid}`);
-    delete state.chats[cid];
-    if (state.currentChatId === cid) {
-      state.currentChatId = null;
-      state.messages = [];
-      setView('empty');
-      updateTopbar();
-    }
-    renderConvList();
-  } catch(e) { toast('Failed to delete chat', 'error'); }
-}
+const msgInput = document.getElementById("msg-input");
 
-function startRename(item, cid, currentName) {
-  const nameDiv = item.querySelector('.conv-name');
-  const actions = item.querySelector('.conv-actions');
-  nameDiv.style.display = 'none';
-  actions.style.display = 'none';
+msgInput.addEventListener("keydown", e => {
 
-  const input = document.createElement('input');
-  input.className = 'conv-rename-input';
-  input.value = currentName;
-  item.insertBefore(input, actions);
-  input.focus();
-  input.select();
+  if (e.key === "Enter" && !e.shiftKey) {
 
-  const commit = async () => {
-    const newName = input.value.trim();
-    if (!newName) { cancelRename(); return; }
-    try {
-      await apiFetch('PATCH', `/chats/${cid}`, { name: newName });
-      state.chats[cid].name = newName;
-      renderConvList();
-      updateTopbar();
-    } catch(e) { toast('Rename failed', 'error'); cancelRename(); }
-  };
-
-  const cancelRename = () => {
-    input.remove();
-    nameDiv.style.display = '';
-    actions.style.display = '';
-  };
-
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    if (e.key === 'Escape') { cancelRename(); }
-  });
-  input.addEventListener('blur', () => setTimeout(cancelRename, 150));
-}
-
-async function uploadFile(file) {
-  const fd = new FormData();
-  fd.append('file', file);
-  try {
-    const res = await apiFetch('POST', '/documents', fd, true);
-    if (res.id) {
-      toast(`✓ ${file.name} uploaded`);
-      await loadDocs();
-    }
-  } catch(e) { toast(`Upload failed: ${file.name}`, 'error'); }
-}
-
-async function deleteDoc(id) {
-  try {
-    await apiFetch('DELETE', `/documents/${id}`);
-    await loadDocs();
-  } catch(e) { toast('Failed to delete document', 'error'); }
-}
-
-
-document.getElementById('new-chat-btn').addEventListener('click', createChat);
-
-const msgInput = document.getElementById('msg-input');
-msgInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    const text = msgInput.value.trim();
-    if (text && state.currentChatId) {
-      msgInput.value = '';
-      autoResize(msgInput);
-      sendMessage(text);
-    }
-  }
-});
-msgInput.addEventListener('input', () => autoResize(msgInput));
 
-document.getElementById('send-btn').addEventListener('click', () => {
-  const text = msgInput.value.trim();
-  if (text && state.currentChatId) {
-    msgInput.value = '';
+    const text = msgInput.value.trim();
+
+    if (!text) return;
+
+    msgInput.value = "";
     autoResize(msgInput);
+
     sendMessage(text);
   }
 });
 
-msgInput.addEventListener('input', () => {
-  const hasText = msgInput.value.trim().length > 0;
-  const hasChatSelected = !!state.currentChatId;
-  document.getElementById('send-btn').disabled = !(hasText && hasChatSelected);
+msgInput.addEventListener("input", () => {
+  autoResize(msgInput);
+  updateSendButton();
 });
 
+document.getElementById("send-btn").onclick = () => {
 
-document.getElementById('file-input').addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (file) uploadFile(file);
-  e.target.value = '';
-});
+  const text = msgInput.value.trim();
 
+  if (!text) return;
+
+  msgInput.value = "";
+  autoResize(msgInput);
+
+  sendMessage(text);
+};
+
+document
+  .getElementById("new-chat-btn")
+  .addEventListener("click", createChat);
 
 async function init() {
-  await Promise.all([loadChats(), loadDocs()]);
-  setView('empty');
+
+  await loadChats();
+
+  setView("empty");
+
+  updateSendButton();
 }
 
 init();

@@ -1,5 +1,5 @@
-from api.endpoints.chat import chat_bp
-from api.endpoints.documents import documents_bp
+from app.api.endpoints.chat import chat_bp
+from app.api.endpoints.documents import documents_bp
 
 
 def register_routes(app):

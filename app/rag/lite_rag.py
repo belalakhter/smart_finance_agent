@@ -1,19 +1,22 @@
 import os
 import asyncio
+import logging
 import numpy as np
 from lightrag import LightRAG, QueryParam
 from lightrag.llm.gemini import gemini_model_complete, gemini_embed
 from lightrag.utils import setup_logger, wrap_embedding_func_with_attrs
 
 setup_logger("lightrag", level="INFO")
+logger = logging.getLogger(__name__)
+
 
 class LiteRAGService:
     def __init__(self, working_dir: str = "./rag_storage"):
         self.working_dir = working_dir
-        self.api_key = os.environ.get("GEMINI_API_KEY")
-        
+        self.api_key = os.environ.get("GOOGLE_API_KEY", "")
+
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set.")
+            raise ValueError("GOOGLE_API_KEY environment variable is not set.")
 
         if not os.path.exists(self.working_dir):
             os.makedirs(self.working_dir)
@@ -43,29 +46,87 @@ class LiteRAGService:
     )
     async def _embedding_func(self, texts: list[str]) -> np.ndarray:
         return await gemini_embed.func(
-            texts, 
-            api_key=self.api_key, 
-            model="models/text-embedding-004"
+            texts,
+            api_key=self.api_key,
+            model="models/text-embedding-004",
         )
 
     async def initialize(self):
-        """Must be called on app startup"""
         await self.rag.initialize_storages()
 
     async def insert_text(self, text: str):
-        """Index a string of text"""
         await self.rag.ainsert(text)
 
-    async def query(self, question: str, mode: str = "hybrid"):
-        """
-        Query the RAG system.
-        Modes: 'naive', 'local', 'global', 'hybrid'
-        """
+    async def query(self, question: str, mode: str = "hybrid") -> str:
         return await self.rag.aquery(
-            question, 
-            param=QueryParam(mode=mode)
+            question,
+            param=QueryParam(mode=mode),
         )
 
     async def finalize(self):
-        """Safely close storage connections"""
         await self.rag.finalize_storages()
+
+def ingest_document(doc_id: str, raw_bytes: bytes, filename: str) -> None:
+    """
+    Decode raw file bytes to text and insert into LightRAG.
+    Called by services/worker_threads.py in a background thread.
+    Updates document status in the DB when done.
+    """
+    async def _run():
+        rag_service = LiteRAGService()
+        await rag_service.initialize()
+
+        # Decode bytes → text
+        try:
+            if filename.lower().endswith(".pdf"):
+                text = _extract_pdf_text(raw_bytes)
+            else:
+                text = raw_bytes.decode("utf-8", errors="ignore")
+        except Exception as e:
+            logger.error(f"[ingest] decode failed for {filename}: {e}")
+            await rag_service.finalize()
+            _mark_status(doc_id, "error")
+            return
+
+        try:
+            await rag_service.insert_text(text)
+            logger.info(f"[ingest] {filename} ({doc_id}) indexed successfully")
+            _mark_status(doc_id, "ready")
+        except Exception as e:
+            logger.error(f"[ingest] insert failed for {filename}: {e}")
+            _mark_status(doc_id, "error")
+        finally:
+            await rag_service.finalize()
+
+    asyncio.run(_run())
+
+
+def _extract_pdf_text(raw_bytes: bytes) -> str:
+    """Extract plain text from PDF bytes using pypdf."""
+    try:
+        import io
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(raw_bytes))
+        return "\n".join(
+            page.extract_text() or "" for page in reader.pages
+        )
+    except ImportError:
+        logger.warning("pypdf not installed — treating PDF as raw bytes")
+        return raw_bytes.decode("utf-8", errors="ignore")
+
+
+def _mark_status(doc_id: str, status: str) -> None:
+    """Update document status in the database."""
+    try:
+        from database.connection import get_session
+        from database.models import Document, StatusEnum
+
+        status_val = StatusEnum[status] if status in StatusEnum.__members__ else StatusEnum.pending
+
+        with get_session() as session:
+            doc = session.query(Document).filter_by(id=doc_id).first()
+            if doc:
+                doc.status = status_val
+                session.commit()
+    except Exception as e:
+        logger.error(f"[ingest] failed to update status for {doc_id}: {e}")

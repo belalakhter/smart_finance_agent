@@ -3,7 +3,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Callable, Coroutine, Any, Optional
 
-from services.logger import get_logger
+from app.services.logger import get_logger
 
 logger = get_logger(__name__, level="DEBUG")
 

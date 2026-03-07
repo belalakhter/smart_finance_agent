@@ -1,8 +1,9 @@
 from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import SQLAlchemyError
-from database.connection import get_session
-from database.models import Chat
+from app.database.connection import get_session
+from app.database.models import Chat
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 import uuid
 
 chat_bp = Blueprint("chat", __name__)
@@ -58,8 +59,6 @@ def get_chat(chat_id):
         return jsonify({"id": str(chat.id), "name": chat.name, "messages": chat.messages}), 200
 
 
-# ── SEND MESSAGE (append + get agent reply) ───────────────────────────────────
-
 @chat_bp.route("/chats/<chat_id>/messages", methods=["POST"])
 def send_message(chat_id):
     """
@@ -87,6 +86,7 @@ def send_message(chat_id):
 
         messages.append({"role": "assistant", "content": reply})
         chat.messages = messages
+        flag_modified(chat, "messages")
 
         try:
             session.commit()

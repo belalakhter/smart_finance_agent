@@ -6,19 +6,17 @@ ENV PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        gcc \
-        build-essential \
-        python3-dev && \
+    apt-get install -y gcc build-essential python3-dev && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip
-
 COPY requirements.txt .
+
+RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install gunicorn
 
 COPY . .
 
 EXPOSE 3000
 
-CMD ["python", "-u", "app/main.py"]
+CMD ["gunicorn","--workers=4","--threads=8","--worker-class=gthread","--timeout=120","--bind=0.0.0.0:3000","app.main:app"]
