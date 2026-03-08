@@ -11,12 +11,21 @@ RUN apt-get update && \
 
 COPY requirements.txt .
 
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install gunicorn
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+RUN pip install --no-cache-dir gunicorn
 
 COPY . .
 
 EXPOSE 3000
 
-CMD ["gunicorn","--workers=4","--threads=8","--worker-class=gthread","--timeout=120","--bind=0.0.0.0:3000","app.main:app"]
+CMD ["gunicorn", \
+     "--workers=4", \
+     "--threads=8", \
+     "--worker-class=gthread", \
+     "--timeout=120", \
+     "--preload", \
+     "--config=gunicorn.conf.py", \
+     "--bind=0.0.0.0:3000", \
+     "app.main:app"]

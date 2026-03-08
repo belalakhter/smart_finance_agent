@@ -48,3 +48,6 @@ psycopg2-binary
 SQLAlchemy
 lightrag-hku
 google-genai
+flasgger
+google-generativeai
+pypdf

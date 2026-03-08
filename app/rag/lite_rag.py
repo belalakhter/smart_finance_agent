@@ -66,17 +66,20 @@ class LiteRAGService:
     async def finalize(self):
         await self.rag.finalize_storages()
 
+
 def ingest_document(doc_id: str, raw_bytes: bytes, filename: str) -> None:
     """
     Decode raw file bytes to text and insert into LightRAG.
-    Called by services/worker_threads.py in a background thread.
-    Updates document status in the DB when done.
+    Called by app/services/worker_threads.py in a background thread.
+    Updates document status in the DB: pending -> processing -> done/failed.
     """
     async def _run():
+        # Mark as processing immediately so the UI reflects activity
+        _mark_status(doc_id, "processing")
+
         rag_service = LiteRAGService()
         await rag_service.initialize()
 
-        # Decode bytes → text
         try:
             if filename.lower().endswith(".pdf"):
                 text = _extract_pdf_text(raw_bytes)
@@ -85,16 +88,16 @@ def ingest_document(doc_id: str, raw_bytes: bytes, filename: str) -> None:
         except Exception as e:
             logger.error(f"[ingest] decode failed for {filename}: {e}")
             await rag_service.finalize()
-            _mark_status(doc_id, "error")
+            _mark_status(doc_id, "failed")
             return
 
         try:
             await rag_service.insert_text(text)
             logger.info(f"[ingest] {filename} ({doc_id}) indexed successfully")
-            _mark_status(doc_id, "ready")
+            _mark_status(doc_id, "done")
         except Exception as e:
             logger.error(f"[ingest] insert failed for {filename}: {e}")
-            _mark_status(doc_id, "error")
+            _mark_status(doc_id, "failed")
         finally:
             await rag_service.finalize()
 
@@ -118,15 +121,29 @@ def _extract_pdf_text(raw_bytes: bytes) -> str:
 def _mark_status(doc_id: str, status: str) -> None:
     """Update document status in the database."""
     try:
-        from database.connection import get_session
-        from database.models import Document, StatusEnum
+        # FIX: was missing app. prefix — caused silent failure, status stayed pending
+        from app.database.connection import get_session
+        from app.database.models import Document, StatusEnum
 
-        status_val = StatusEnum[status] if status in StatusEnum.__members__ else StatusEnum.pending
+        # FIX: was using "ready"/"error" which don't exist in StatusEnum.
+        # Correct values are: pending, processing, done, failed
+        status_map = {
+            "processing": StatusEnum.processing,
+            "done":       StatusEnum.done,
+            "failed":     StatusEnum.failed,
+            # legacy aliases just in case
+            "ready":      StatusEnum.done,
+            "error":      StatusEnum.failed,
+        }
+        status_val = status_map.get(status, StatusEnum.failed)
 
         with get_session() as session:
             doc = session.query(Document).filter_by(id=doc_id).first()
             if doc:
                 doc.status = status_val
                 session.commit()
+                logger.info(f"[ingest] doc {doc_id} status -> {status}")
+            else:
+                logger.warning(f"[ingest] doc {doc_id} not found in DB when marking {status}")
     except Exception as e:
         logger.error(f"[ingest] failed to update status for {doc_id}: {e}")

@@ -19,7 +19,7 @@ docker rmi -f smart_chat_agent-app:latest 2>/dev/null || true
 echo "Building and starting services..."
 docker compose up -d --build
 
-echo "Application Start ~"
+echo "Application Start! "
 echo "Following logs from the app container (Ctrl+C to stop and cleanup)..."
 
 docker compose logs -f app

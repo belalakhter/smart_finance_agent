@@ -14,8 +14,37 @@ def _session():
 @chat_bp.route("/chats", methods=["POST"])
 def create_chat():
     """
-    Body (optional): { "name": "My conversation" }
-    Returns: { "id": "<uuid>", "name": "...", "messages": [] }
+    Create a new chat
+    ---
+    tags:
+      - Chats
+    parameters:
+      - in: body
+        name: body
+        required: false
+        schema:
+          type: object
+          properties:
+            name:
+              type: string
+              example: My conversation
+    responses:
+      201:
+        description: Chat created successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: string
+              example: "550e8400-e29b-41d4-a716-446655440000"
+            name:
+              type: string
+              example: My conversation
+            messages:
+              type: array
+              items: {}
+      500:
+        description: Database error
     """
     data = request.get_json(silent=True) or {}
     name = data.get("name", "New Conversation")
@@ -33,10 +62,34 @@ def create_chat():
             return jsonify({"error": str(e)}), 500
 
 
-
 @chat_bp.route("/chats", methods=["GET"])
 def list_chats():
-    """Returns all chats (id, name, message count)."""
+    """
+    List all chats
+    ---
+    tags:
+      - Chats
+    responses:
+      200:
+        description: List of all chats
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                example: "550e8400-e29b-41d4-a716-446655440000"
+              name:
+                type: string
+                example: My conversation
+              message_count:
+                type: integer
+                example: 5
+              preview:
+                type: string
+                example: "Hello, how can I help you…"
+    """
     with _session() as session:
         chats = session.query(Chat).all()
         return jsonify([
@@ -52,6 +105,41 @@ def list_chats():
 
 @chat_bp.route("/chats/<chat_id>", methods=["GET"])
 def get_chat(chat_id):
+    """
+    Get a chat by ID
+    ---
+    tags:
+      - Chats
+    parameters:
+      - in: path
+        name: chat_id
+        required: true
+        type: string
+        description: UUID of the chat
+    responses:
+      200:
+        description: Chat object with full message history
+        schema:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            messages:
+              type: array
+              items:
+                type: object
+                properties:
+                  role:
+                    type: string
+                    example: user
+                  content:
+                    type: string
+                    example: Hello!
+      404:
+        description: Chat not found
+    """
     with _session() as session:
         chat = session.query(Chat).filter_by(id=chat_id).first()
         if not chat:
@@ -62,8 +150,52 @@ def get_chat(chat_id):
 @chat_bp.route("/chats/<chat_id>/messages", methods=["POST"])
 def send_message(chat_id):
     """
-    Body: { "message": "Hello" }
-    Appends user message, calls agent, appends reply, returns reply.
+    Send a message to a chat
+    ---
+    tags:
+      - Chats
+    parameters:
+      - in: path
+        name: chat_id
+        required: true
+        type: string
+        description: UUID of the chat
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+              example: "What is the weather today?"
+    responses:
+      200:
+        description: Agent reply and updated message history
+        schema:
+          type: object
+          properties:
+            reply:
+              type: string
+              example: "I don't have access to real-time weather data."
+            messages:
+              type: array
+              items:
+                type: object
+                properties:
+                  role:
+                    type: string
+                    example: assistant
+                  content:
+                    type: string
+      400:
+        description: Missing message field
+      404:
+        description: Chat not found
+      500:
+        description: Database error
     """
     data = request.get_json(silent=True) or {}
     message = data.get("message", "").strip()
@@ -79,7 +211,7 @@ def send_message(chat_id):
         messages.append({"role": "user", "content": message})
 
         try:
-            from agent.graph import run_agent  
+            from app.agent.graph import run_agent
             reply = run_agent(chat_id=str(chat.id), messages=messages)
         except Exception as e:
             reply = f"[Agent error] {e}"
@@ -97,10 +229,47 @@ def send_message(chat_id):
         return jsonify({"reply": reply, "messages": messages}), 200
 
 
-
 @chat_bp.route("/chats/<chat_id>", methods=["PATCH"])
 def rename_chat(chat_id):
-    """Body: { "name": "New name" }"""
+    """
+    Rename a chat
+    ---
+    tags:
+      - Chats
+    parameters:
+      - in: path
+        name: chat_id
+        required: true
+        type: string
+        description: UUID of the chat
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+              example: "Renamed conversation"
+    responses:
+      200:
+        description: Chat renamed successfully
+        schema:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+      400:
+        description: Missing name field
+      404:
+        description: Chat not found
+      500:
+        description: Database error
+    """
     data = request.get_json(silent=True) or {}
     name = data.get("name", "").strip()
     if not name:
@@ -121,6 +290,31 @@ def rename_chat(chat_id):
 
 @chat_bp.route("/chats/<chat_id>", methods=["DELETE"])
 def delete_chat(chat_id):
+    """
+    Delete a chat
+    ---
+    tags:
+      - Chats
+    parameters:
+      - in: path
+        name: chat_id
+        required: true
+        type: string
+        description: UUID of the chat to delete
+    responses:
+      200:
+        description: Chat deleted successfully
+        schema:
+          type: object
+          properties:
+            deleted:
+              type: string
+              example: "550e8400-e29b-41d4-a716-446655440000"
+      404:
+        description: Chat not found
+      500:
+        description: Database error
+    """
     with _session() as session:
         chat = session.query(Chat).filter_by(id=chat_id).first()
         if not chat:
