@@ -1,15 +1,15 @@
 from flask import Blueprint, request, jsonify, send_file
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 from app.database.connection import get_session
 from app.database.models import Document, StatusEnum
 import uuid
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 documents_bp = Blueprint("documents", __name__)
 
-def _session():
-    return get_session()
 
 @documents_bp.route("/documents", methods=["POST"])
 def upload_document():
@@ -68,7 +68,7 @@ def upload_document():
         status=StatusEnum.pending,
     )
 
-    with _session() as session:
+    with get_session() as session:
         try:
             session.add(doc)
             session.commit()
@@ -78,20 +78,35 @@ def upload_document():
             doc_status = doc.status.value
         except SQLAlchemyError as e:
             session.rollback()
+            logger.error(f"[upload] DB error saving document: {e}")
             return jsonify({"error": str(e)}), 500
 
     try:
-        from app.services.worker_threads import submit_task 
+        from app.services.worker_threads import submit_task
         from app.rag.lite_rag import ingest_document
         submit_task(ingest_document, doc_id, raw, filename)
-    except Exception:
-        pass
+        logger.info(f"[upload] Ingestion task submitted for doc {doc_id} ({filename})")
+    except Exception as e:
+        logger.error(f"[upload] Failed to submit ingestion task for {doc_id}: {e}")
+        _mark_failed(doc_id)
 
     return jsonify({
         "id":       doc_id,
         "filename": doc_name,
         "status":   doc_status,
     }), 201
+
+
+def _mark_failed(doc_id: str):
+    """Fallback: mark document as failed if task submission itself errors."""
+    try:
+        with get_session() as session:
+            doc = session.query(Document).filter_by(id=doc_id).first()
+            if doc:
+                doc.status = StatusEnum.failed
+                session.commit()
+    except Exception as e:
+        logger.error(f"[upload] Could not mark {doc_id} as failed: {e}")
 
 
 @documents_bp.route("/documents", methods=["GET"])
@@ -120,7 +135,7 @@ def list_documents():
                 enum: [pending, processing, done, failed]
                 example: "done"
     """
-    with _session() as session:
+    with get_session() as session:
         docs = session.query(Document).all()
         return jsonify([
             {
@@ -153,7 +168,7 @@ def get_document(doc_id):
       404:
         description: Document not found
     """
-    with _session() as session:
+    with get_session() as session:
         doc = session.query(Document).filter_by(id=doc_id).first()
         if not doc:
             return jsonify({"error": "Document not found"}), 404
@@ -191,7 +206,7 @@ def delete_document(doc_id):
       500:
         description: Database error
     """
-    with _session() as session:
+    with get_session() as session:
         doc = session.query(Document).filter_by(id=doc_id).first()
         if not doc:
             return jsonify({"error": "Document not found"}), 404

@@ -26,7 +26,7 @@ def node_rag(state: AgentState) -> AgentState:
         return state
 
     try:
-        from rag.lite_rag import LiteRAGService
+        from app.rag.lite_rag import LiteRAGService
 
         rag = LiteRAGService()
 

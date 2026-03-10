@@ -1,10 +1,12 @@
 import os
-import google.generativeai as genai
 from typing import Optional
+from openai import OpenAI
 
-genai.configure(api_key=os.environ.get("GOOGLE_API_KEY", ""))
+_client = OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY", ""),
+)
 
-_model = genai.GenerativeModel("gemini-2.0-flash")
+LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 
 
 def chat_completion(
@@ -15,34 +17,21 @@ def chat_completion(
 ) -> str:
     """
     Send a list of {"role": "user"|"assistant", "content": "..."} messages
-    to Gemini and return the assistant reply as a string.
+    to OpenAI and return the assistant reply as a string.
     """
-    history = []
-    last_user_msg = ""
+    formatted: list[dict] = []
+
+    if system_prompt:
+        formatted.append({"role": "system", "content": system_prompt})
 
     for m in messages:
-        role = "user" if m["role"] == "user" else "model"
-        if role == "user":
-            last_user_msg = m["content"]
-            history.append({"role": "user", "parts": [m["content"]]})
-        else:
-            history.append({"role": "model", "parts": [m["content"]]})
+        formatted.append({"role": m["role"], "content": m["content"]})
 
-    sys_instruction = system_prompt or ""
-
-    model = genai.GenerativeModel(
-        "gemini-2.0-flash",
-        system_instruction=sys_instruction if sys_instruction else None,
+    response = _client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=formatted,
+        temperature=temperature,
+        max_tokens=max_tokens,
     )
 
-    chat = model.start_chat(history=history[:-1] if history else [])
-
-    response = chat.send_message(
-        last_user_msg,
-        generation_config=genai.types.GenerationConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-        ),
-    )
-
-    return response.text
+    return response.choices[0].message.content

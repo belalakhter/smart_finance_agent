@@ -1,10 +1,9 @@
 import os
 import asyncio
 import logging
-import numpy as np
 from lightrag import LightRAG, QueryParam
-from lightrag.llm.gemini import gemini_model_complete, gemini_embed
-from lightrag.utils import setup_logger, wrap_embedding_func_with_attrs
+from lightrag.llm.openai import gpt_4o_mini_complete, openai_embed
+from lightrag.utils import setup_logger
 
 setup_logger("lightrag", level="INFO")
 logger = logging.getLogger(__name__)
@@ -13,42 +12,17 @@ logger = logging.getLogger(__name__)
 class LiteRAGService:
     def __init__(self, working_dir: str = "./rag_storage"):
         self.working_dir = working_dir
-        self.api_key = os.environ.get("GOOGLE_API_KEY", "")
 
-        if not self.api_key:
-            raise ValueError("GOOGLE_API_KEY environment variable is not set.")
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY environment variable is not set.")
 
         if not os.path.exists(self.working_dir):
             os.makedirs(self.working_dir)
 
         self.rag = LightRAG(
             working_dir=self.working_dir,
-            llm_model_func=self._llm_model_func,
-            embedding_func=self._embedding_func,
-            llm_model_name="gemini-2.0-flash",
-        )
-
-    async def _llm_model_func(self, prompt, system_prompt=None, history_messages=[], **kwargs):
-        return await gemini_model_complete(
-            prompt,
-            system_prompt=system_prompt,
-            history_messages=history_messages,
-            api_key=self.api_key,
-            model_name="gemini-2.0-flash",
-            **kwargs,
-        )
-
-    @wrap_embedding_func_with_attrs(
-        embedding_dim=768,
-        send_dimensions=True,
-        max_token_size=2048,
-        model_name="models/text-embedding-004",
-    )
-    async def _embedding_func(self, texts: list[str]) -> np.ndarray:
-        return await gemini_embed.func(
-            texts,
-            api_key=self.api_key,
-            model="models/text-embedding-004",
+            llm_model_func=gpt_4o_mini_complete,
+            embedding_func=openai_embed,
         )
 
     async def initialize(self):
@@ -72,9 +46,11 @@ def ingest_document(doc_id: str, raw_bytes: bytes, filename: str) -> None:
     Decode raw file bytes to text and insert into LightRAG.
     Called by app/services/worker_threads.py in a background thread.
     Updates document status in the DB: pending -> processing -> done/failed.
+
+    Uses a fresh event loop per call to avoid conflicts with Flask's event loop
+    or any existing loop running in the worker thread.
     """
     async def _run():
-        # Mark as processing immediately so the UI reflects activity
         _mark_status(doc_id, "processing")
 
         rag_service = LiteRAGService()
@@ -101,7 +77,15 @@ def ingest_document(doc_id: str, raw_bytes: bytes, filename: str) -> None:
         finally:
             await rag_service.finalize()
 
-    asyncio.run(_run())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_run())
+    except Exception as e:
+        logger.error(f"[ingest] Unhandled error for {doc_id}: {e}")
+        _mark_status(doc_id, "failed")
+    finally:
+        loop.close()
 
 
 def _extract_pdf_text(raw_bytes: bytes) -> str:
@@ -109,10 +93,9 @@ def _extract_pdf_text(raw_bytes: bytes) -> str:
     try:
         import io
         from pypdf import PdfReader
+
         reader = PdfReader(io.BytesIO(raw_bytes))
-        return "\n".join(
-            page.extract_text() or "" for page in reader.pages
-        )
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
     except ImportError:
         logger.warning("pypdf not installed — treating PDF as raw bytes")
         return raw_bytes.decode("utf-8", errors="ignore")
@@ -121,17 +104,13 @@ def _extract_pdf_text(raw_bytes: bytes) -> str:
 def _mark_status(doc_id: str, status: str) -> None:
     """Update document status in the database."""
     try:
-        # FIX: was missing app. prefix — caused silent failure, status stayed pending
         from app.database.connection import get_session
         from app.database.models import Document, StatusEnum
 
-        # FIX: was using "ready"/"error" which don't exist in StatusEnum.
-        # Correct values are: pending, processing, done, failed
         status_map = {
             "processing": StatusEnum.processing,
             "done":       StatusEnum.done,
             "failed":     StatusEnum.failed,
-            # legacy aliases just in case
             "ready":      StatusEnum.done,
             "error":      StatusEnum.failed,
         }
@@ -144,6 +123,8 @@ def _mark_status(doc_id: str, status: str) -> None:
                 session.commit()
                 logger.info(f"[ingest] doc {doc_id} status -> {status}")
             else:
-                logger.warning(f"[ingest] doc {doc_id} not found in DB when marking {status}")
+                logger.warning(
+                    f"[ingest] doc {doc_id} not found in DB when marking {status}"
+                )
     except Exception as e:
         logger.error(f"[ingest] failed to update status for {doc_id}: {e}")
