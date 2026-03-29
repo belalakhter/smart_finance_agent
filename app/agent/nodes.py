@@ -21,12 +21,12 @@ def node_prepare(state: AgentState) -> AgentState:
     return state
 
 def node_rag(state: AgentState) -> AgentState:
-    """Query LightRAG for relevant document context."""
+    """Query Falkor-backed RAG for relevant document context."""
     if not state.last_user_message:
         return state
 
     try:
-        from app.rag.lite_rag import LiteRAGService
+        from app.rag.rag_processing import LiteRAGService
 
         rag = LiteRAGService()
 

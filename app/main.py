@@ -3,7 +3,7 @@ import atexit
 from flask import Flask, jsonify, send_from_directory
 from flasgger import Swagger
 
-from app.database.connection import init_connection_pool
+from app.database.connection import close_connection_pool, init_connection_pool
 from app.services.worker_threads import init_worker, shutdown_worker
 from app.services.logger import get_logger
 from app.api.routes import register_routes
@@ -87,6 +87,7 @@ init_worker(max_workers=10)
 def cleanup():
     logger.info("Shutting down worker...")
     shutdown_worker()
+    close_connection_pool()
 
 atexit.register(cleanup)
 

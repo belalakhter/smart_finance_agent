@@ -11,7 +11,6 @@ logger = get_logger(__name__, level="DEBUG")
 class AsyncWorker:
     """
     Background async worker running in its own event loop thread.
-    Allows submitting async coroutines from sync or async code.
     """
 
     def __init__(self, max_workers: int = 5):
@@ -43,10 +42,6 @@ class AsyncWorker:
     ) -> Optional[Any]:
         """
         Submit async coroutine to background loop.
-
-        :param coro: async coroutine
-        :param wait: if True, block and return result
-        :param timeout: optional timeout for waiting
         """
         if not self._started:
             raise RuntimeError("AsyncWorker not started. Call start().")

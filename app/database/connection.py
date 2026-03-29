@@ -1,77 +1,67 @@
-import psycopg2
-from psycopg2 import pool
-from psycopg2.extensions import connection as _connection
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.database.models import Base 
+import os
+from typing import Optional
 
-_connection_pool: pool.SimpleConnectionPool | None = None
-_engine = None 
-_SessionLocal = None  
+from redis import Redis
+from redis.connection import ConnectionPool
 
-def init_connection_pool(minconn=1, maxconn=5):
+_pool: Optional[ConnectionPool] = None
+_client: Optional[Redis] = None
+
+
+def init_connection_pool(
+    minconn: int = 1,
+    maxconn: int = 5,
+    force: bool = False,
+) -> ConnectionPool:
     """
-    Initialize the PostgreSQL connection pool and create tables if they don't exist.
-    Call this once in main.py
-    """
-    global _connection_pool, _engine, _SessionLocal
+    Initialize a Redis connection pool targeting FalkorDB (Redis-compatible).
 
-    if _connection_pool is None:
-        _connection_pool = psycopg2.pool.SimpleConnectionPool(
-            minconn=minconn,
-            maxconn=maxconn,
-            user="postgres",
-            password="postgres",
-            host="smart_agent_db",
-            database="postgres"
+    Use env: FALKORDB_HOST / FALKORDB_PORT (defaults match docker-compose: falkordb:6379).
+    ``minconn`` is accepted for compatibility with existing callers but is not used by redis-py.
+    """
+    global _pool, _client
+
+    if force and _pool is not None:
+        _pool.disconnect()
+        _pool = None
+        _client = None
+
+    if _pool is None:
+        host = os.environ.get(
+            "FALKORDB_HOST",
+            os.environ.get("REDIS_HOST", "falkordb"),
         )
-        print("PostgreSQL connection pool initialized.")
+        port = int(
+            os.environ.get(
+                "FALKORDB_PORT",
+                os.environ.get("REDIS_PORT", "6379"),
+            )
+        )
+        db = int(os.environ.get("REDIS_DB", "0"))
 
-        def get_conn():
-            return _connection_pool.getconn()
+        _pool = ConnectionPool(
+            host=host,
+            port=port,
+            db=db,
+            max_connections=maxconn,
+            decode_responses=False,
+        )
+        _client = Redis(connection_pool=_pool)
+        print(f"FalkorDB (Redis) connection pool initialized ({host}:{port}).")
 
-        _engine = create_engine(
-            "postgresql+psycopg2://",
-            creator=get_conn,
-            poolclass=None  
-        )    
+    return _pool
 
-        Base.metadata.create_all(_engine, checkfirst=True)
-        print("Database tables ensured (migration complete).")
 
-        _SessionLocal = sessionmaker(bind=_engine)
+def get_redis() -> Redis:
+    if _client is None:
+        raise RuntimeError("Redis not initialized. Call init_connection_pool() first.")
+    return _client
 
-    return _connection_pool
 
-def get_connection() -> _connection:
-    """
-    Get a connection from the pool.
-    Raises an error if pool is not initialized.
-    """
-    if _connection_pool is None:
-        raise Exception("Connection pool not initialized. Call init_connection_pool() first.")
-    return _connection_pool.getconn()
-
-def release_connection(conn: _connection):
-    """
-    Return a connection back to the pool.
-    """
-    if _connection_pool is None:
-        raise Exception("Connection pool not initialized.")
-    _connection_pool.putconn(conn)
-
-def close_all_connections():
-    """
-    Close all connections in the pool.
-    """
-    if _connection_pool is not None:
-        _connection_pool.closeall()
-        print("All connections in the pool have been closed.")
-
-def get_session():
-    """
-    Get a SQLAlchemy session for ORM operations.
-    """
-    if _SessionLocal is None:
-        raise Exception("Connection pool not initialized. Call init_connection_pool() first.")
-    return _SessionLocal()
+def close_connection_pool() -> None:
+    global _pool, _client
+    if _pool is not None:
+        _pool.disconnect()
+        _pool = None
+        _client = None
+        print("FalkorDB (Redis) connection pool closed.")

@@ -10,8 +10,8 @@ def post_fork(server, worker):
     from app.database.connection import init_connection_pool
     from app.services.worker_threads import init_worker
 
-    logger.info(f"[worker {worker.pid}] Reinitializing DB connection pool after fork...")
-    init_connection_pool(minconn=1, maxconn=5)
+    logger.info(f"[worker {worker.pid}] Reinitializing FalkorDB (Redis) pool after fork...")
+    init_connection_pool(minconn=1, maxconn=5, force=True)
 
     logger.info(f"[worker {worker.pid}] Reinitializing async worker after fork...")
     init_worker(max_workers=10)

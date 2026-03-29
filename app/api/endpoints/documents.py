@@ -1,10 +1,15 @@
 from flask import Blueprint, request, jsonify, send_file
-from sqlalchemy.exc import SQLAlchemyError
-from app.database.connection import get_session
-from app.database.models import Document, StatusEnum
 import uuid
 import io
 import logging
+
+from app.database.document_store import (
+    create_document,
+    delete_document,
+    get_document,
+    list_documents,
+    set_document_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,56 +66,44 @@ def upload_document():
     raw = f.read()
     filename = f.filename
 
-    doc = Document(
-        id=uuid.uuid4(),
-        filename=filename,
-        content=raw,
-        status=StatusEnum.pending,
-    )
+    doc_id = str(uuid.uuid4())
+    doc_status = "pending"
 
-    with get_session() as session:
-        try:
-            session.add(doc)
-            session.commit()
-            session.refresh(doc)
-            doc_id     = str(doc.id)
-            doc_name   = doc.filename
-            doc_status = doc.status.value
-        except SQLAlchemyError as e:
-            session.rollback()
-            logger.error(f"[upload] DB error saving document: {e}")
-            return jsonify({"error": str(e)}), 500
+    try:
+        create_document(doc_id, filename, raw, status=doc_status)
+    except Exception as e:
+        logger.error(f"[upload] FalkorDB error saving document: {e}")
+        return jsonify({"error": str(e)}), 500
 
     try:
         from app.services.worker_threads import submit_task
-        from app.rag.lite_rag import ingest_document
+        from app.rag.rag_processing import ingest_document
+
         submit_task(ingest_document, doc_id, raw, filename)
         logger.info(f"[upload] Ingestion task submitted for doc {doc_id} ({filename})")
     except Exception as e:
         logger.error(f"[upload] Failed to submit ingestion task for {doc_id}: {e}")
         _mark_failed(doc_id)
 
-    return jsonify({
-        "id":       doc_id,
-        "filename": doc_name,
-        "status":   doc_status,
-    }), 201
+    return jsonify(
+        {
+            "id": doc_id,
+            "filename": filename,
+            "status": doc_status,
+        }
+    ), 201
 
 
 def _mark_failed(doc_id: str):
     """Fallback: mark document as failed if task submission itself errors."""
     try:
-        with get_session() as session:
-            doc = session.query(Document).filter_by(id=doc_id).first()
-            if doc:
-                doc.status = StatusEnum.failed
-                session.commit()
+        set_document_status(doc_id, "failed")
     except Exception as e:
         logger.error(f"[upload] Could not mark {doc_id} as failed: {e}")
 
 
 @documents_bp.route("/documents", methods=["GET"])
-def list_documents():
+def list_documents_route():
     """
     List all uploaded documents
     ---
@@ -135,20 +128,16 @@ def list_documents():
                 enum: [pending, processing, done, failed]
                 example: "done"
     """
-    with get_session() as session:
-        docs = session.query(Document).all()
-        return jsonify([
-            {
-                "id": str(d.id),
-                "filename": d.filename,
-                "status": d.status.value,
-            }
-            for d in docs
-        ]), 200
+    try:
+        docs = list_documents()
+        return jsonify(docs), 200
+    except Exception as e:
+        logger.error(f"[documents] list failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @documents_bp.route("/documents/<doc_id>", methods=["GET"])
-def get_document(doc_id):
+def get_document_route(doc_id):
     """
     Download a document by ID
     ---
@@ -168,19 +157,22 @@ def get_document(doc_id):
       404:
         description: Document not found
     """
-    with get_session() as session:
-        doc = session.query(Document).filter_by(id=doc_id).first()
+    try:
+        doc = get_document(doc_id)
         if not doc:
             return jsonify({"error": "Document not found"}), 404
         return send_file(
-            io.BytesIO(doc.content),
-            download_name=doc.filename,
+            io.BytesIO(doc["content"]),
+            download_name=doc["filename"],
             as_attachment=True,
         )
+    except Exception as e:
+        logger.error(f"[documents] get failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @documents_bp.route("/documents/<doc_id>", methods=["DELETE"])
-def delete_document(doc_id):
+def delete_document_route(doc_id):
     """
     Delete a document by ID
     ---
@@ -206,14 +198,10 @@ def delete_document(doc_id):
       500:
         description: Database error
     """
-    with get_session() as session:
-        doc = session.query(Document).filter_by(id=doc_id).first()
-        if not doc:
+    try:
+        if not delete_document(doc_id):
             return jsonify({"error": "Document not found"}), 404
-        try:
-            session.delete(doc)
-            session.commit()
-            return jsonify({"deleted": doc_id}), 200
-        except SQLAlchemyError as e:
-            session.rollback()
-            return jsonify({"error": str(e)}), 500
+        return jsonify({"deleted": doc_id}), 200
+    except Exception as e:
+        logger.error(f"[documents] delete failed: {e}")
+        return jsonify({"error": str(e)}), 500

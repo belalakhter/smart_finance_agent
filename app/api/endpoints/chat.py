@@ -1,15 +1,13 @@
 from flask import Blueprint, request, jsonify
-from sqlalchemy.exc import SQLAlchemyError
-from app.database.connection import get_session
-from app.database.models import Chat
-from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 import uuid
+import threading
+
+from app.services.map_store import chat_store
 
 chat_bp = Blueprint("chat", __name__)
 
-def _session():
-    return get_session()
+_chat_meta: dict[str, dict] = {}
+_chat_meta_lock = threading.RLock()
 
 @chat_bp.route("/chats", methods=["POST"])
 def create_chat():
@@ -49,17 +47,11 @@ def create_chat():
     data = request.get_json(silent=True) or {}
     name = data.get("name", "New Conversation")
 
-    chat = Chat(id=uuid.uuid4(), name=name, messages=[])
+    chat_id = str(uuid.uuid4())
+    with _chat_meta_lock:
+        _chat_meta[chat_id] = {"id": chat_id, "name": name}
 
-    with _session() as session:
-        try:
-            session.add(chat)
-            session.commit()
-            session.refresh(chat)
-            return jsonify({"id": str(chat.id), "name": chat.name, "messages": chat.messages}), 201
-        except SQLAlchemyError as e:
-            session.rollback()
-            return jsonify({"error": str(e)}), 500
+    return jsonify({"id": chat_id, "name": name, "messages": []}), 201
 
 
 @chat_bp.route("/chats", methods=["GET"])
@@ -90,17 +82,18 @@ def list_chats():
                 type: string
                 example: "Hello, how can I help you…"
     """
-    with _session() as session:
-        chats = session.query(Chat).all()
-        return jsonify([
-            {
-                "id": str(c.id),
-                "name": c.name,
-                "message_count": len(c.messages) if c.messages else 0,
-                "preview": _preview(c.messages),
-            }
-            for c in chats
-        ]), 200
+    with _chat_meta_lock:
+        chats = list(_chat_meta.values())
+
+    return jsonify([
+        {
+            "id": c["id"],
+            "name": c["name"],
+            "message_count": chat_store.size(c["id"]),
+            "preview": _preview(chat_store.get(c["id"])),
+        }
+        for c in chats
+    ]), 200
 
 
 @chat_bp.route("/chats/<chat_id>", methods=["GET"])
@@ -140,11 +133,16 @@ def get_chat(chat_id):
       404:
         description: Chat not found
     """
-    with _session() as session:
-        chat = session.query(Chat).filter_by(id=chat_id).first()
-        if not chat:
-            return jsonify({"error": "Chat not found"}), 404
-        return jsonify({"id": str(chat.id), "name": chat.name, "messages": chat.messages}), 200
+    with _chat_meta_lock:
+        chat = _chat_meta.get(chat_id)
+    if not chat:
+        return jsonify({"error": "Chat not found"}), 404
+
+    return jsonify({
+        "id": chat["id"],
+        "name": chat["name"],
+        "messages": chat_store.get(chat_id),
+    }), 200
 
 
 @chat_bp.route("/chats/<chat_id>/messages", methods=["POST"])
@@ -202,31 +200,23 @@ def send_message(chat_id):
     if not message:
         return jsonify({"error": "message is required"}), 400
 
-    with _session() as session:
-        chat = session.query(Chat).filter_by(id=chat_id).first()
-        if not chat:
-            return jsonify({"error": "Chat not found"}), 404
+    with _chat_meta_lock:
+        chat = _chat_meta.get(chat_id)
+    if not chat:
+        return jsonify({"error": "Chat not found"}), 404
 
-        messages = list(chat.messages or [])
-        messages.append({"role": "user", "content": message})
+    chat_store.push(chat_id, {"role": "user", "content": message})
+    messages = chat_store.get(chat_id)
 
-        try:
-            from app.agent.graph import run_agent
-            reply = run_agent(chat_id=str(chat.id), messages=messages)
-        except Exception as e:
-            reply = f"[Agent error] {e}"
+    try:
+        from app.agent.graph import run_agent
+        reply = run_agent(chat_id=chat_id, messages=messages)
+    except Exception as e:
+        reply = f"[Agent error] {e}"
 
-        messages.append({"role": "assistant", "content": reply})
-        chat.messages = messages
-        flag_modified(chat, "messages")
-
-        try:
-            session.commit()
-        except SQLAlchemyError as e:
-            session.rollback()
-            return jsonify({"error": str(e)}), 500
-
-        return jsonify({"reply": reply, "messages": messages}), 200
+    chat_store.push(chat_id, {"role": "assistant", "content": reply})
+    messages = chat_store.get(chat_id)
+    return jsonify({"reply": reply, "messages": messages}), 200
 
 
 @chat_bp.route("/chats/<chat_id>", methods=["PATCH"])
@@ -275,17 +265,12 @@ def rename_chat(chat_id):
     if not name:
         return jsonify({"error": "name is required"}), 400
 
-    with _session() as session:
-        chat = session.query(Chat).filter_by(id=chat_id).first()
+    with _chat_meta_lock:
+        chat = _chat_meta.get(chat_id)
         if not chat:
             return jsonify({"error": "Chat not found"}), 404
-        chat.name = name
-        try:
-            session.commit()
-            return jsonify({"id": str(chat.id), "name": chat.name}), 200
-        except SQLAlchemyError as e:
-            session.rollback()
-            return jsonify({"error": str(e)}), 500
+        chat["name"] = name
+    return jsonify({"id": chat_id, "name": name}), 200
 
 
 @chat_bp.route("/chats/<chat_id>", methods=["DELETE"])
@@ -315,17 +300,12 @@ def delete_chat(chat_id):
       500:
         description: Database error
     """
-    with _session() as session:
-        chat = session.query(Chat).filter_by(id=chat_id).first()
-        if not chat:
+    with _chat_meta_lock:
+        if chat_id not in _chat_meta:
             return jsonify({"error": "Chat not found"}), 404
-        try:
-            session.delete(chat)
-            session.commit()
-            return jsonify({"deleted": chat_id}), 200
-        except SQLAlchemyError as e:
-            session.rollback()
-            return jsonify({"error": str(e)}), 500
+        _chat_meta.pop(chat_id, None)
+    chat_store.delete(chat_id)
+    return jsonify({"deleted": chat_id}), 200
 
 
 def _preview(messages):

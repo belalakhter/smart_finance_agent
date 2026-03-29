@@ -44,8 +44,7 @@ tzdata
 urllib3
 watchdog
 Werkzeug
-psycopg2-binary
-SQLAlchemy
+redis
 lightrag-hku
 flasgger
 pypdf
