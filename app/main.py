@@ -93,7 +93,7 @@ atexit.register(cleanup)
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 3000))
+    port = int(os.getenv("PORT", 8080))
 
     logger.warning("Running Flask development server")
 

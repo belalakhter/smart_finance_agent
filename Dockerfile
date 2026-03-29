@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir gunicorn
 
 COPY . .
 
-EXPOSE 3000
+EXPOSE 8080
 
 CMD ["gunicorn", \
      "--workers=4", \
@@ -27,5 +27,5 @@ CMD ["gunicorn", \
      "--timeout=120", \
      "--preload", \
      "--config=gunicorn.conf.py", \
-     "--bind=0.0.0.0:3000", \
+     "--bind=0.0.0.0:8080", \
      "app.main:app"]

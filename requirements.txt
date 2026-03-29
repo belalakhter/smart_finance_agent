@@ -45,7 +45,6 @@ urllib3
 watchdog
 Werkzeug
 redis
-lightrag-hku
 flasgger
 pypdf
 openai
