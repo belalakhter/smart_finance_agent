@@ -1,36 +1,49 @@
 import logging
+from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
-from app.agent.nodes import node_prepare, node_rag, node_web_search, node_llm
+from app.agent.nodes import (
+    node_prepare,
+    node_router,
+    node_rag_semantic,
+    node_rag_graph,
+    node_web_search,
+    node_llm,
+)
 
 logger = logging.getLogger(__name__)
 
-_PIPELINE = [
-    node_prepare,
-    node_rag,
-    node_web_search,
-    node_llm,
-]
+def create_graph():
+    workflow = StateGraph(AgentState)
 
+    workflow.add_node("prepare", node_prepare)
+    workflow.add_node("router", node_router)
+    workflow.add_node("rag_semantic", node_rag_semantic)
+    workflow.add_node("rag_graph", node_rag_graph)
+    workflow.add_node("web_search", node_web_search)
+    workflow.add_node("llm", node_llm)
+
+    workflow.set_entry_point("prepare")
+    workflow.add_edge("prepare", "router")
+
+    workflow.add_edge("router", "rag_semantic")
+    workflow.add_edge("rag_semantic", "rag_graph")
+    workflow.add_edge("rag_graph", "web_search")
+    workflow.add_edge("web_search", "llm")
+    workflow.add_edge("llm", END)
+
+    return workflow.compile()
+
+_app = create_graph()
 
 def run_agent(chat_id: str, messages: list[dict]) -> str:
     """
     Entry-point called by the chat route.
-
-    Args:
-        chat_id:  UUID string of the current chat (for logging / future use).
-        messages: Full conversation history as
-                  [{"role": "user"|"assistant", "content": "..."}, ...]
-
-    Returns:
-        The assistant's reply as a plain string.
     """
-    state = AgentState(chat_id=chat_id, messages=messages)
+    initial_state = AgentState(chat_id=chat_id, messages=messages)
 
-    for node_fn in _PIPELINE:
-        try:
-            state = node_fn(state)
-        except Exception as e:
-            logger.error(f"[graph] node {node_fn.__name__} raised: {e}", exc_info=True)
-            return f"An error occurred in {node_fn.__name__}: {e}"
-
-    return state.final_reply or "I was unable to generate a response."
+    try:
+        final_state = _app.invoke(initial_state)
+        return final_state["final_reply"] or "I was unable to generate a response."
+    except Exception as e:
+        logger.error(f"[graph] Error invoking graph: {e}", exc_info=True)
+        return f"An error occurred: {e}"

@@ -59,7 +59,7 @@ function setView(mode) {
 }
 function updateTopbar() {
   const n=document.getElementById('topbar-name'), i=document.getElementById('topbar-id');
-  if (!state.currentChatId) { n.textContent='Smat Agent'; i.textContent='no conversation selected'; return; }
+  if (!state.currentChatId) { n.textContent='Smart Agent'; i.textContent='no conversation selected'; return; }
   const m=state.chats[state.currentChatId];
   n.textContent=m?.name||'Untitled'; i.textContent='#'+state.currentChatId.slice(0,8);
 }
@@ -68,13 +68,13 @@ function updateTopbar() {
 function appendMessage(role, content) {
   const c=document.getElementById('messages'), row=document.createElement('div');
   row.className=`msg-row ${role}`;
-  if (role==='assistant') row.innerHTML=`<div class="msg-avatar">S</div><div class="msg-content">${renderMarkdown(content)}</div>`;
+  if (role==='assistant') row.innerHTML=`<img src="/assets/icon.png" class="msg-avatar" alt="S"><div class="msg-content">${renderMarkdown(content)}</div>`;
   else row.innerHTML=`<div class="msg-content">${escHtml(content)}</div>`;
   c.appendChild(row); scrollToBottom();
 }
 function showThinking() {
   const row=document.createElement('div'); row.id='thinking-indicator'; row.className='msg-row assistant thinking-row';
-  row.innerHTML=`<div class="msg-avatar">S</div><div class="msg-content"><div class="thinking-dots"><span></span><span></span><span></span></div></div>`;
+  row.innerHTML=`<img src="/assets/icon.png" class="msg-avatar" alt="S"><div class="msg-content"><div class="thinking-dots"><span></span><span></span><span></span></div></div>`;
   document.getElementById('messages').appendChild(row); scrollToBottom();
 }
 function hideThinking() { const e=document.getElementById('thinking-indicator'); if(e) e.remove(); }
@@ -92,9 +92,19 @@ function renderConvList() {
     const meta=state.chats[cid], isActive=cid===state.currentChatId;
     const item=document.createElement('div');
     item.className='conv-item'+(isActive?' active':'');
+    
+    const countBadge = meta.message_count ? `<span class="conv-count">${meta.message_count}</span>` : '';
+    const previewText = meta.preview ? `<div class="conv-preview">${escHtml(meta.preview)}</div>` : '';
+    
     item.innerHTML=`
       <div class="conv-active-dot"></div>
-      <div class="conv-name">${escHtml(meta.name)}</div>
+      <div class="conv-main">
+        <div class="conv-name-row">
+          <span class="conv-name">${escHtml(meta.name)}</span>
+          ${countBadge}
+        </div>
+        ${previewText}
+      </div>
       <div class="conv-actions">
         <button class="icon-btn rename-btn" title="Rename">
           <svg viewBox="0 0 14 14" fill="none"><path d="M9.5 2.5l2 2-7 7H2.5v-2l7-7z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -103,7 +113,7 @@ function renderConvList() {
           <svg viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6.5v4M8.5 6.5v4M3 4l.8 7.5h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>`;
-    item.querySelector('.conv-name').addEventListener('click', ()=>selectChat(cid));
+    item.querySelector('.conv-main').addEventListener('click', ()=>selectChat(cid));
     item.querySelector('.conv-active-dot').addEventListener('click', ()=>selectChat(cid));
     item.querySelector('.rename-btn').addEventListener('click', e=>{ e.stopPropagation(); startRename(item,cid,meta.name); });
     item.querySelector('.delete-btn').addEventListener('click', e=>{ e.stopPropagation(); deleteChat(cid); });
@@ -194,25 +204,55 @@ async function sendMessage(text) {
 async function loadDocs() {
   try {
     const data=await apiFetch('GET','/documents');
-    state.docs=Array.isArray(data)?data:[]; renderDocList();
+    state.docs=Array.isArray(data)?data:[];
+    renderDocList();
+    if (state.currentChatId && state.messages.length > 0) {
+       document.getElementById('table-area').style.display = state.docs.length ? 'block' : 'none';
+    }
   } catch(e) { console.error('Failed to load documents:',e.message); }
 }
 function renderDocList() {
-  const list=document.getElementById('doc-list'); list.innerHTML='';
+  const listTop=document.getElementById('doc-list'), tableBody=document.getElementById('doc-table-body');
+  listTop.innerHTML=''; tableBody.innerHTML='';
+  
   if (!state.docs.length) return;
+  
   state.docs.forEach(doc=>{
-    const item=document.createElement('div'); item.className='doc-item';
     const ext=doc.filename.split('.').pop().toLowerCase();
-    const icon=ext==='pdf'?'PDF':ext==='md'?'MD':'TXT';
+    const typeLabel=ext==='pdf'?'PDF':ext==='md'?'MD':'TXT';
+    const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    // Sidebar list item (Existing)
+    const item=document.createElement('div'); item.className='doc-item';
     item.innerHTML=`
-      <span class="doc-icon">${icon}</span>
+      <span class="doc-icon">${typeLabel}</span>
       <span class="doc-name" title="${escHtml(doc.filename)}">${escHtml(doc.filename)}</span>
       <span class="doc-status ${doc.status}">${doc.status}</span>
       <button class="icon-btn danger doc-del" title="Delete">
         <svg viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6.5v4M8.5 6.5v4M3 4l.8 7.5h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>`;
     item.querySelector('.doc-del').addEventListener('click', e=>{ e.stopPropagation(); deleteDocument(doc.id,doc.filename); });
-    list.appendChild(item);
+    listTop.appendChild(item);
+
+    // Table Row (New)
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td>
+        <div class="td-doc">
+          <div class="td-icon">${typeLabel}</div>
+          <div class="td-name">${escHtml(doc.filename)}</div>
+        </div>
+      </td>
+      <td>${dateStr}</td>
+      <td><span class="badge ${ext}">${typeLabel}</span></td>
+      <td><span class="badge ${doc.status}">${doc.status}</span></td>
+      <td>
+        <button class="icon-btn danger table-doc-del" title="Delete">
+          <svg viewBox="0 0 14 14" fill="none"><path d="M2 4h10M5 4V2.5h4V4M5.5 6.5v4M8.5 6.5v4M3 4l.8 7.5h6.4L11 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </td>`;
+    tr.querySelector('.table-doc-del').addEventListener('click', ()=>deleteDocument(doc.id,doc.filename));
+    tableBody.appendChild(tr);
   });
 }
 async function uploadDocument(file) {

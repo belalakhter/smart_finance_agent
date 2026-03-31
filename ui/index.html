@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Smat Agent</title>
+<title>Smart Agent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet" />
@@ -13,8 +13,8 @@
 <div id="app">
   <aside id="sidebar">
     <div class="sb-header">
-      <div class="sb-logo">S</div>
-      <span class="sb-title">Smat Agent</span>
+      <img src="/assets/icon.png" class="sb-logo" alt="Smart Agent" />
+      <span class="sb-title">Smart Agent</span>
     </div>
     <button class="sb-new-btn" id="new-chat-btn">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -41,24 +41,60 @@
   <main id="main">
     <div id="topbar">
       <div class="topbar-left">
-        <div class="topbar-chat-name" id="topbar-name">Smat Agent</div>
+        <div class="topbar-chat-name" id="topbar-name">Smart Agent</div>
         <div class="topbar-chat-id" id="topbar-id">no conversation selected</div>
       </div>
       <div class="topbar-right">
         <div class="status-badge"><div class="status-dot"></div>online</div>
       </div>
     </div>
-    <div id="empty-state">
-      <div class="empty-icon">_</div>
-      <div class="empty-title">No conversation selected</div>
-      <div class="empty-sub">Create a new conversation to get started.</div>
+    
+    <div id="main-scroll">
+      <div id="empty-state">
+        <div class="empty-icon">_</div>
+        <div class="empty-title">No conversation selected</div>
+        <div class="empty-sub">Create a new conversation to get started.</div>
+      </div>
+
+      <div id="chat-area" style="display:none">
+        <div id="messages"></div>
+      </div>
+
+      <div id="table-area" style="display:none">
+        <div class="section-header">
+          <div class="sh-left">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 3.5h9m-9 3.5h9m-9 3.5h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <span class="sh-title">Document Intelligence</span>
+          </div>
+          <div class="sh-right">
+            <button class="table-btn" onclick="document.getElementById('file-input').click()">
+              <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              Add documents
+            </button>
+          </div>
+        </div>
+        <div class="table-card">
+          <table id="doc-table">
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="doc-table-body">
+              <!-- Rows injected by script.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
-    <div id="chat-area" style="display:none">
-      <div id="messages"></div>
-    </div>
+
     <div id="input-area">
       <div class="input-wrap">
-        <textarea id="msg-input" placeholder="Message Smat Agent…" rows="1"></textarea>
+        <textarea id="msg-input" placeholder="Ask anything…" rows="1"></textarea>
         <button id="send-btn" disabled>
           <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
             <path d="M7.5 2L7.5 13M3 6.5L7.5 2L12 6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>

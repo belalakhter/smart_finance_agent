@@ -84,3 +84,13 @@ def shutdown_worker() -> None:
     if _worker:
         _worker.shutdown()
         _worker = None
+
+def submit_task(func: Callable, *args: Any, **kwargs: Any) -> None:
+    """
+    Submit a synchronous function to the background executor.
+    """
+    if _worker is None:
+        raise RuntimeError("Worker not initialized. Call init_worker().")
+    
+    logger.info(f"Submitting background task: {func.__name__}")
+    _worker._executor.submit(func, *args, **kwargs)

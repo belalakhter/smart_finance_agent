@@ -1,17 +1,17 @@
 import asyncio
 import logging
 import re
-from typing import Optional
+import os
+import io
+import uuid
+import tempfile
+from datetime import datetime
+from typing import Optional, List, Tuple
+from mistralai.client import Mistral
 
 logger = logging.getLogger(__name__)
 
 RAG_PREFIX = "smart_agent:rag:"
-RAG_DOC_IDS_KEY = f"{RAG_PREFIX}doc_ids"
-
-
-def _tokenize(text: str) -> set[str]:
-    return set(re.findall(r"[a-zA-Z0-9_]+", text.lower()))
-
 
 def _chunk_text(text: str, chunk_size: int = 1200, overlap: int = 120) -> list[str]:
     text = text.strip()
@@ -28,169 +28,174 @@ def _chunk_text(text: str, chunk_size: int = 1200, overlap: int = 120) -> list[s
     return chunks
 
 
-class FalkorGraphRAGService:
-    """
-    FalkorDB-backed RAG service.
+def _extract_pdf_text_mistral(raw_bytes: bytes) -> str:
+    """Extract text from PDF using Mistral OCR API."""
+    api_key = os.environ.get("MISTRAL_API_KEY", "")
+    if not api_key:
+        logger.warning("MISTRAL_API_KEY not set - falling back to pypdf")
+        return _extract_pdf_text_pypdf(raw_bytes)
 
-    This keeps the existing async API expected by agent nodes, but persists
-    indexed text chunks in FalkorDB (Redis protocol) so it aligns with the
-    Graphiti + Falkor deployment model.
-    """
+    try:
+        from mistralai.client import Mistral
+        client = Mistral(api_key=api_key)
+        
+        uploaded = client.files.upload(
+            file={
+                "file_name": f"doc_{uuid.uuid4().hex[:8]}.pdf",
+                "content": raw_bytes,
+            },
+            purpose="ocr"
+        )
+        file_id = uploaded.id
+        ocr_response = client.ocr.process(
+            model="mistral-ocr-latest",
+            document={"type": "file", "file_id": file_id}
+        )
+        
+        full_text = ""
+        for page in ocr_response.pages:
+            full_text += (page.markdown or "") + "\n\n"
+            
+        try:
+            client.files.delete(file_id=file_id)
+        except:
+            pass
+
+        return full_text
+    except Exception as e:
+        logger.error(f"Mistral OCR failed: {e}", exc_info=True)
+        return _extract_pdf_text_pypdf(raw_bytes)
+
+
+def _extract_pdf_text_pypdf(raw_bytes: bytes) -> str:
+    """Extract plain text from PDF bytes using pypdf (Fallback)."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(raw_bytes))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception as e:
+        logger.error(f"pypdf extraction failed: {e}")
+        return raw_bytes.decode("utf-8", errors="ignore")
+
+
+class GraphitiRAGService:
+    """Graph-based RAG using Graphiti and FalkorDB."""
 
     def __init__(self):
-        self._redis = None
+        self.graphiti = None
+
+    async def _ensure_initialized(self):
+        if self.graphiti is None:
+            from graphiti_core import Graphiti
+            from graphiti_core.driver.falkordb_driver import FalkorDriver
+            from app.llm.llm_client import get_graphiti_llm_client, get_graphiti_embedder
+
+            host = os.environ.get("FALKORDB_HOST", "falkordb")
+            port = int(os.environ.get("FALKORDB_PORT", "6379"))
+            
+            driver = FalkorDriver(host=host, port=port)
+            self.graphiti = Graphiti(
+                graph_driver=driver,
+                llm_client=get_graphiti_llm_client(),
+                embedder=get_graphiti_embedder()
+            )
 
     async def initialize(self):
-        from app.database.connection import get_redis
-
-        self._redis = get_redis()
+        await self._ensure_initialized()
 
     async def insert_document(self, doc_id: str, text: str, filename: str = ""):
-        if self._redis is None:
-            raise RuntimeError("RAG service not initialized.")
+        await self._ensure_initialized()
+        if self.graphiti:
+            await self.graphiti.add_episode(
+                name=filename or doc_id,
+                episode_body=text,
+                source_description="Financial Document",
+                reference_time=datetime.now(),
+                group_id=doc_id
+            )
 
-        chunks = _chunk_text(text)
-        if not chunks:
-            return
-
-        key_prefix = f"{RAG_PREFIX}doc:{doc_id}"
-        pipe = self._redis.pipeline()
-        pipe.sadd(RAG_DOC_IDS_KEY, doc_id.encode("utf-8"))
-        pipe.hset(
-            f"{key_prefix}:meta",
-            mapping={
-                b"filename": filename.encode("utf-8"),
-                b"chunk_count": str(len(chunks)).encode("utf-8"),
-            },
-        )
-        pipe.delete(f"{key_prefix}:chunks")
-        for chunk in chunks:
-            pipe.rpush(f"{key_prefix}:chunks", chunk.encode("utf-8"))
-        pipe.execute()
-
-    async def insert_text(self, text: str):
-        """
-        Backward-compatible method signature used by older call sites.
-        Stores text under an ephemeral doc id.
-        """
-        import uuid
-
-        await self.insert_document(str(uuid.uuid4()), text, filename="unknown")
-
-    async def query(self, question: str, mode: str = "hybrid") -> str:
-        _ = mode
-        if self._redis is None:
-            raise RuntimeError("RAG service not initialized.")
-
-        q_tokens = _tokenize(question)
-        if not q_tokens:
-            return "[No relevant context found]"
-
-        best_matches: list[tuple[int, str]] = []
-        for raw_doc_id in self._redis.smembers(RAG_DOC_IDS_KEY):
-            doc_id = raw_doc_id.decode("utf-8") if isinstance(raw_doc_id, bytes) else str(raw_doc_id)
-            chunks = self._redis.lrange(f"{RAG_PREFIX}doc:{doc_id}:chunks", 0, -1)
-            for raw_chunk in chunks:
-                chunk = raw_chunk.decode("utf-8") if isinstance(raw_chunk, bytes) else str(raw_chunk)
-                score = len(q_tokens.intersection(_tokenize(chunk)))
-                if score > 0:
-                    best_matches.append((score, chunk))
-
-        if not best_matches:
-            return "[No relevant context found]"
-
-        best_matches.sort(key=lambda x: x[0], reverse=True)
-        top_chunks = [c for _, c in best_matches[:4]]
-        return "\n\n".join(top_chunks)
+    async def query(self, question: str, mode: str = "graph") -> str:
+        await self._ensure_initialized()
+        if self.graphiti:
+            limit = 5 if mode == "graph" else 10
+            search_results = await self.graphiti.search(query=question, num_results=limit)
+            
+            if not search_results:
+                return "[No relevant context found]"
+                
+            parts = [f"- {res}" for res in search_results]
+            return "\n".join(parts)
+        return "[Graphiti not initialized]"
 
     async def finalize(self):
-        # Managed by app lifecycle; nothing to close per request.
-        return None
+        pass
 
 
-# Compatibility alias used by app.agent.nodes
-LiteRAGService = FalkorGraphRAGService
-
+HybridRAGService = GraphitiRAGService
 
 def ingest_document(doc_id: str, raw_bytes: bytes, filename: str) -> None:
     """
-    Decode raw file bytes to text and insert into Falkor-backed RAG.
-    Called by app/services/worker_threads.py in a background thread.
-    Updates document status in FalkorDB: pending -> processing -> done/failed.
-
-    Uses a fresh event loop per call to avoid conflicts with Flask's event loop
-    or any existing loop running in the worker thread.
+    Decode raw file bytes to text and insert into Graphiti-backed RAG (FalkorDB).
+    Now with chunking for better granularity.
     """
     async def _run():
+        logger.info(f"[ingest] Starting ingestion for {filename} ({doc_id})")
         _mark_status(doc_id, "processing")
-
-        rag_service = LiteRAGService()
+        rag_service = GraphitiRAGService()
         await rag_service.initialize()
-
+        
         try:
             if filename.lower().endswith(".pdf"):
-                text = _extract_pdf_text(raw_bytes)
+                logger.info(f"[ingest] Extracting PDF text for {filename}...")
+                text = _extract_pdf_text_mistral(raw_bytes)
             else:
                 text = raw_bytes.decode("utf-8", errors="ignore")
+            
+            chunks = _chunk_text(text, chunk_size=5000, overlap=1200)
+            logger.info(f"[ingest] Ingesting {len(chunks)} chunks for {filename}...")
+            
+            for i, chunk in enumerate(chunks):
+                if not chunk.strip():
+                    continue
+                
+                logger.info(f"[ingest]   -> Processing chunk {i+1}/{len(chunks)}...")
+                try:
+                    await rag_service.insert_document(
+                        doc_id=f"{doc_id}_{i}", 
+                        text=chunk, 
+                        filename=f"{filename} (part {i+1})"
+                    )
+                except Exception as chunk_e:
+                    logger.warning(f"[ingest]   !! Chunk {i+1} failed but continuing: {chunk_e}")
+            
+            logger.info(f"[ingest] Successfully ingested {filename} ({len(chunks)} chunks).")
+            _mark_status(doc_id, "completed")
         except Exception as e:
-            logger.error(f"[ingest] decode failed for {filename}: {e}")
-            await rag_service.finalize()
-            _mark_status(doc_id, "failed")
-            return
-
-        try:
-            await rag_service.insert_document(doc_id=doc_id, text=text, filename=filename)
-            logger.info(f"[ingest] {filename} ({doc_id}) indexed successfully")
-            _mark_status(doc_id, "done")
-        except Exception as e:
-            logger.error(f"[ingest] insert failed for {filename}: {e}")
+            logger.error(f"[ingest] failed for {filename}: {e}", exc_info=True)
             _mark_status(doc_id, "failed")
         finally:
             await rag_service.finalize()
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(_run())
-    except Exception as e:
-        logger.error(f"[ingest] Unhandled error for {doc_id}: {e}")
-        _mark_status(doc_id, "failed")
-    finally:
-        loop.close()
-
-
-def _extract_pdf_text(raw_bytes: bytes) -> str:
-    """Extract plain text from PDF bytes using pypdf."""
-    try:
-        import io
-        from pypdf import PdfReader
-
-        reader = PdfReader(io.BytesIO(raw_bytes))
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
-    except ImportError:
-        logger.warning("pypdf not installed — treating PDF as raw bytes")
-        return raw_bytes.decode("utf-8", errors="ignore")
+        asyncio.run(_run())
+    except Exception as outer_e:
+        logger.error(f"[ingest] Global failure for {filename}: {outer_e}")
 
 
 def _mark_status(doc_id: str, status: str) -> None:
     """Update document status in FalkorDB (Redis)."""
     try:
         from app.database.document_store import set_document_status
-
         status_map = {
             "processing": "processing",
-            "done": "done",
+            "done": "completed",
+            "completed": "completed",
             "failed": "failed",
-            "ready": "done",
+            "ready": "completed",
             "error": "failed",
         }
         norm = status_map.get(status, "failed")
-
         if set_document_status(doc_id, norm):
             logger.info(f"[ingest] doc {doc_id} status -> {status}")
-        else:
-            logger.warning(
-                f"[ingest] doc {doc_id} not found in store when marking {status}"
-            )
     except Exception as e:
         logger.error(f"[ingest] failed to update status for {doc_id}: {e}")

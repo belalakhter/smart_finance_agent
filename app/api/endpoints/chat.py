@@ -6,8 +6,12 @@ from app.services.map_store import chat_store
 
 chat_bp = Blueprint("chat", __name__)
 
-_chat_meta: dict[str, dict] = {}
-_chat_meta_lock = threading.RLock()
+import json
+from app.database.connection import get_redis
+
+chat_bp = Blueprint("chat", __name__)
+
+METADATA_KEY = "smart_agent:chat_metadata"
 
 @chat_bp.route("/chats", methods=["POST"])
 def create_chat():
@@ -47,9 +51,14 @@ def create_chat():
     data = request.get_json(silent=True) or {}
     name = data.get("name", "New Conversation")
 
-    chat_id = str(uuid.uuid4())
-    with _chat_meta_lock:
-        _chat_meta[chat_id] = {"id": chat_id, "name": name}
+    chat_id = uuid.uuid4().hex
+    chat_data = {"id": chat_id, "name": name}
+    
+    try:
+        r = get_redis()
+        r.hset(METADATA_KEY, chat_id, json.dumps(chat_data))
+    except Exception as e:
+        return jsonify({"error": f"Failed to save chat: {e}"}), 500
 
     return jsonify({"id": chat_id, "name": name, "messages": []}), 201
 
@@ -82,8 +91,12 @@ def list_chats():
                 type: string
                 example: "Hello, how can I help you…"
     """
-    with _chat_meta_lock:
-        chats = list(_chat_meta.values())
+    try:
+        r = get_redis()
+        raw_meta = r.hgetall(METADATA_KEY)
+        chats = [json.loads(v) for v in raw_meta.values()]
+    except Exception as e:
+        return jsonify({"error": f"Failed to list chats: {e}"}), 500
 
     return jsonify([
         {
@@ -133,10 +146,14 @@ def get_chat(chat_id):
       404:
         description: Chat not found
     """
-    with _chat_meta_lock:
-        chat = _chat_meta.get(chat_id)
-    if not chat:
-        return jsonify({"error": "Chat not found"}), 404
+    try:
+        r = get_redis()
+        raw = r.hget(METADATA_KEY, chat_id)
+        if not raw:
+            return jsonify({"error": "Chat not found"}), 404
+        chat = json.loads(raw)
+    except Exception as e:
+        return jsonify({"error": f"Failed to get chat: {e}"}), 500
 
     return jsonify({
         "id": chat["id"],
@@ -200,10 +217,12 @@ def send_message(chat_id):
     if not message:
         return jsonify({"error": "message is required"}), 400
 
-    with _chat_meta_lock:
-        chat = _chat_meta.get(chat_id)
-    if not chat:
-        return jsonify({"error": "Chat not found"}), 404
+    try:
+        r = get_redis()
+        if not r.hexists(METADATA_KEY, chat_id):
+            return jsonify({"error": "Chat not found"}), 404
+    except Exception as e:
+        return jsonify({"error": f"Database error: {e}"}), 500
 
     chat_store.push(chat_id, {"role": "user", "content": message})
     messages = chat_store.get(chat_id)
@@ -265,11 +284,18 @@ def rename_chat(chat_id):
     if not name:
         return jsonify({"error": "name is required"}), 400
 
-    with _chat_meta_lock:
-        chat = _chat_meta.get(chat_id)
-        if not chat:
+    try:
+        r = get_redis()
+        raw = r.hget(METADATA_KEY, chat_id)
+        if not raw:
             return jsonify({"error": "Chat not found"}), 404
+        
+        chat = json.loads(raw)
         chat["name"] = name
+        r.hset(METADATA_KEY, chat_id, json.dumps(chat))
+    except Exception as e:
+        return jsonify({"error": f"Failed to rename chat: {e}"}), 500
+
     return jsonify({"id": chat_id, "name": name}), 200
 
 
@@ -300,11 +326,14 @@ def delete_chat(chat_id):
       500:
         description: Database error
     """
-    with _chat_meta_lock:
-        if chat_id not in _chat_meta:
+    try:
+        r = get_redis()
+        if not r.hdel(METADATA_KEY, chat_id):
             return jsonify({"error": "Chat not found"}), 404
-        _chat_meta.pop(chat_id, None)
-    chat_store.delete(chat_id)
+        chat_store.delete(chat_id)
+    except Exception as e:
+        return jsonify({"error": f"Failed to delete chat: {e}"}), 500
+
     return jsonify({"deleted": chat_id}), 200
 
 

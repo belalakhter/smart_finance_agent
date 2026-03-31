@@ -11,21 +11,21 @@ RUN apt-get update && \
 
 COPY requirements.txt .
 
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir gunicorn
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install -r requirements.txt gunicorn
 
 COPY . .
 
 EXPOSE 8080
 
 CMD ["gunicorn", \
-     "--workers=4", \
-     "--threads=8", \
-     "--worker-class=gthread", \
-     "--timeout=120", \
-     "--preload", \
-     "--config=gunicorn.conf.py", \
-     "--bind=0.0.0.0:8080", \
-     "app.main:app"]
+    "--workers=4", \
+    "--threads=8", \
+    "--worker-class=gthread", \
+    "--timeout=120", \
+    "--preload", \
+    "--config=gunicorn.conf.py", \
+    "--bind=0.0.0.0:8080", \
+    "app.main:app"]

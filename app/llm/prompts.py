@@ -12,6 +12,15 @@ AGENT_SYSTEM_PROMPT = """You are Smat Agent, a helpful AI assistant with access 
 - Format responses in clean Markdown where helpful (code blocks, bullet lists, headers).
 """
 
+ROUTER_PROMPT = """Analyze the user's latest message and decide the best retrieval strategy.
+- Select "A" (Semantic+History) if the message is a follow-up, refers to previous context, or is conversational.
+- Select "B" (Pure Graph) if the message is a direct factual question, asks for specific entities, or is a "what is" type question that can be answered from the knowledge graph without needing chat history.
+
+Output ONLY the letter "A" or "B"."""
+
+QUERY_REFORMULATE_PROMPT = """Given the conversation history and a new question, reformulate the question into a standalone search query that captures the user's intent, specifically for searching a financial document database.
+Do not answer the question. Just output the reformulated query."""
+
 RAG_CONTEXT_TEMPLATE = """## Relevant context from uploaded documents:
 {context}
 

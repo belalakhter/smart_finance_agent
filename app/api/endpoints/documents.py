@@ -66,7 +66,7 @@ def upload_document():
     raw = f.read()
     filename = f.filename
 
-    doc_id = str(uuid.uuid4())
+    doc_id = uuid.uuid4().hex
     doc_status = "pending"
 
     try:

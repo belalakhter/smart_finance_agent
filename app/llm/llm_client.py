@@ -1,6 +1,9 @@
 import os
 from typing import Optional
 from openai import OpenAI
+from graphiti_core.llm_client.openai_client import OpenAIClient
+from graphiti_core.llm_client.config import LLMConfig
+from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 
 _client = OpenAI(
     api_key=os.environ.get("OPENAI_API_KEY", ""),
@@ -35,3 +38,22 @@ def chat_completion(
     )
 
     return response.choices[0].message.content
+
+
+def get_graphiti_llm_client() -> OpenAIClient:
+    """Return a Graphiti-compatible OpenAI LLM client."""
+    config = LLMConfig(
+        api_key=os.environ.get("OPENAI_API_KEY", ""),
+        model=LLM_MODEL,
+        small_model="gpt-4o-mini"
+    )
+    return OpenAIClient(config=config)
+
+
+def get_graphiti_embedder() -> OpenAIEmbedder:
+    """Return a Graphiti-compatible OpenAI Embedder."""
+    config = OpenAIEmbedderConfig(
+        api_key=os.environ.get("OPENAI_API_KEY", ""),
+        embedding_model="text-embedding-3-small"
+    )
+    return OpenAIEmbedder(config=config)

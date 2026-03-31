@@ -1,92 +1,77 @@
-import threading
+import json
+import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-import copy
 
+from app.database.connection import get_redis
+
+logger = logging.getLogger(__name__)
 
 class ChatKVStore:
     """
-    In-memory KV store for chat messages.
+    Redis-backed store for chat messages.
     """
 
-    def __init__(self):
-        self._store: Dict[str, List[dict]] = {}
-        self._lock = threading.RLock()
-
+    def _key(self, key: str) -> str:
+        return f"smart_agent:chat:{key}:messages"
 
     def push(self, key: str, message: dict) -> None:
         """
-        Append a message to a chat list.
+        Append a message to a chat list in Redis.
         """
-        with self._lock:
-            if key not in self._store:
-                self._store[key] = []
-
+        try:
+            r = get_redis()
             enriched_message = {
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 **message
             }
-
-            self._store[key].append(enriched_message)
+            r.rpush(self._key(key), json.dumps(enriched_message))
+        except Exception as e:
+            logger.error(f"[ChatKVStore] push failed: {e}")
 
     def get(self, key: str) -> List[dict]:
         """
-        Get all messages for a key.
+        Get all messages for a key from Redis.
         """
-        with self._lock:
-            return copy.deepcopy(self._store.get(key, []))
-
-    def pop(self, key: str) -> Optional[List[dict]]:
-        """
-        Remove and return entire message list.
-        """
-        with self._lock:
-            return self._store.pop(key, None)
+        try:
+            r = get_redis()
+            raw_msgs = r.lrange(self._key(key), 0, -1)
+            return [json.loads(m) for m in raw_msgs]
+        except Exception as e:
+            logger.error(f"[ChatKVStore] get failed: {e}")
+            return []
 
     def delete(self, key: str) -> None:
         """
-        Delete a chat history.
+        Delete a chat history from Redis.
         """
-        with self._lock:
-            self._store.pop(key, None)
-
-    def exists(self, key: str) -> bool:
-        """
-        Check if key exists.
-        """
-        with self._lock:
-            return key in self._store
-
-    def trim(self, key: str, max_length: int = 50) -> None:
-        """
-        Keep only last N messages (like Redis list trim).
-        """
-        with self._lock:
-            if key in self._store:
-                self._store[key] = self._store[key][-max_length:]
-
-    def last(self, key: str) -> Optional[dict]:
-        """
-        Get last message.
-        """
-        with self._lock:
-            if key in self._store and self._store[key]:
-                return self._store[key][-1]
-            return None
+        try:
+            r = get_redis()
+            r.delete(self._key(key))
+        except Exception as e:
+            logger.error(f"[ChatKVStore] delete failed: {e}")
 
     def size(self, key: str) -> int:
         """
-        Number of messages in a chat.
+        Number of messages in a chat from Redis.
         """
-        with self._lock:
-            return len(self._store.get(key, []))
+        try:
+            r = get_redis()
+            return r.llen(self._key(key))
+        except Exception as e:
+            logger.error(f"[ChatKVStore] size failed: {e}")
+            return 0
 
     def clear(self) -> None:
         """
-        Clear entire store.
+        Clear all chat histories (DANGER: only for testing).
         """
-        with self._lock:
-            self._store.clear()
-
+        try:
+            r = get_redis()
+            keys = r.keys("smart_agent:chat:*:messages")
+            if keys:
+                r.delete(*keys)
+        except Exception as e:
+            logger.error(f"[ChatKVStore] clear failed: {e}")
 
 chat_store = ChatKVStore()
